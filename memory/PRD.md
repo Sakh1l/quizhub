@@ -1,61 +1,42 @@
 # QuizHub - PRD
 
 ## Original Problem Statement
-1. Read the codebase of this QuizHub app, check UI unit testing, and create a TODO list
-2. Maintain Go tech stack, make it a single binary combining SQLite for DB
-3. Run deployment health check and make deployment-ready (Option 2: keep SQLite, fix quick wins)
+1. Read the codebase, check UI testing, create TODO list
+2. Maintain Go stack, single binary with SQLite
+3. Deployment readiness (Option 2: keep SQLite, quick fixes)
+4. WebSocket real-time sync, Admin/Host panel with PIN, Dockerfile
 
 ## Architecture
-- **Language**: Go 1.24+
-- **Database**: SQLite via `modernc.org/sqlite` (pure Go, no CGO)
-- **Frontend**: Vanilla HTML/CSS/JS served via `npx serve` on port 3000
-- **Backend**: FastAPI reverse proxy (port 8001) → Go binary (port 8002)
-- **Output**: Single self-contained Go binary (14MB) with embedded static assets
+- **Go binary** (14MB): API + embedded frontend + SQLite
+- **WebSocket hub**: Real-time events for players AND admin
+- **Admin panel**: PIN-protected (/admin.html) with full game/question management
+- **Deployment**: FastAPI proxy for Emergent K8s; standalone Docker for self-hosted
 
-### Deployment Architecture (Emergent)
-```
-Kubernetes Ingress
-  ├── /api/*  → Backend (port 8001) → FastAPI proxy → Go binary (port 8002) → SQLite
-  └── /*      → Frontend (port 3000) → npx serve → static HTML/CSS/JS
-```
-
-### Package Structure
-```
-cmd/server/main.go        → Entry point, server wiring, graceful shutdown
-internal/db/db.go          → SQLite operations, migrations, seed data
-internal/handlers/          → HTTP handlers with dependency injection
-internal/middleware/        → CORS, logging, recovery, security headers
-internal/models/            → Data structures
-web/embed.go               → go:embed directive for static files
-web/static/                 → HTML, CSS, JS frontend
-backend/server.py          → FastAPI reverse proxy for Emergent deployment
-backend/quizhub            → Compiled Go binary
-frontend/public/           → Static files for frontend service
-```
+### API Endpoints (18 total)
+- Public: health, join, players, game/state, answer, leaderboard, categories, questions
+- Game control: game/start, game/next, game/reset, game/start-with-categories
+- Admin (PIN-protected): admin/auth, admin/kick, admin/timer, admin/config, questions/add, questions/edit, questions/delete
+- WebSocket: /api/ws (role=player|admin)
 
 ## What's Been Implemented
-- [Jan 2026] **Phase 1**: Full codebase audit → `TODO.md` with 100 items
-- [Jan 2026] **Phase 2**: Complete refactor to single binary architecture
-  - SQLite DB with 15 seeded questions, full game flow
-  - 5-package Go architecture, embedded frontend
-  - 35 unit tests (82% DB, 72% handler coverage)
-  - Modern dark UI with animations, timer, responsive design
-- [Jan 2026] **Phase 3**: Deployment readiness
-  - FastAPI reverse proxy for Emergent compatibility
-  - Port configuration (8001 backend, 3000 frontend)
-  - Frontend served via npx serve
-  - All 17 tests passing (10 backend + 7 frontend)
+- [Jan 2026] Phase 1: Codebase audit, TODO.md
+- [Jan 2026] Phase 2: Full refactor to single binary, 35 Go unit tests
+- [Jan 2026] Phase 3: Deployment readiness (FastAPI proxy, port config)
+- [Jan 2026] Phase 4: WebSocket + Admin + Dockerfile
+  - WebSocket hub with gorilla/websocket, broadcasts: player_joined, game_started, new_question, player_answered, timer_tick, game_finished, game_reset, player_kicked, leaderboard_update, players_update
+  - Admin panel: PIN auth ("1234" default), game controls, timer config, player kick, question CRUD, live answer stats, live leaderboard
+  - Dockerfile: multi-stage (golang:1.24-alpine -> alpine:3.21), single binary, /app/data volume
+  - 38 Go unit tests (14 DB + 24 handler) all passing
+  - E2E tests: 100% pass (18 backend + 14 frontend + WS)
+
+## Admin Credentials
+- Default PIN: `1234` (configurable via `QUIZHUB_ADMIN_PIN` env)
+- Admin URL: `/admin.html`
 
 ## Deployment Notes
-- SQLite data is **ephemeral** — resets on pod restart. Acceptable for short-lived quiz games.
-- For persistent data, migrate to MongoDB (Option 1 deferred)
+- SQLite data is ephemeral on Emergent (resets on pod restart)
+- For Docker self-hosted: `docker build -t quizhub . && docker run -p 8080:8080 -v ./data:/app/data quizhub`
 
-## Prioritized Backlog
-- **P1**: MongoDB migration (if persistence needed), WebSockets, Admin view, Room system
-- **P2**: Sound effects, dark/light toggle, avatars, confetti, Dockerfile, CI/CD
-
-## Next Tasks
-1. MongoDB migration for persistent data (if needed)
-2. WebSocket for real-time sync
-3. Admin/Host control panel
-4. Dockerfile for self-hosted deployment
+## Backlog
+- P1: MongoDB migration, room system
+- P2: Sound effects, dark/light toggle, avatars, confetti, streak bonuses

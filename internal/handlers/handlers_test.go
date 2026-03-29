@@ -9,6 +9,7 @@ import (
 
 	"github.com/sakh1l/quizhub/internal/db"
 	"github.com/sakh1l/quizhub/internal/models"
+	"github.com/sakh1l/quizhub/internal/ws"
 )
 
 func setupTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
@@ -19,7 +20,7 @@ func setupTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	h := New(database)
+	h := New(database, ws.NewHub())
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -36,6 +37,30 @@ func doRequest(mux *http.ServeMux, method, path string, body interface{}) *httpt
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	return w
+}
+
+func doAdminRequest(mux *http.ServeMux, method, path string, body interface{}, token string) *httptest.ResponseRecorder {
+	var buf bytes.Buffer
+	if body != nil {
+		json.NewEncoder(&buf).Encode(body)
+	}
+	req := httptest.NewRequest(method, path, &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return w
+}
+
+func getAdminToken(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	w := doRequest(mux, http.MethodPost, "/api/admin/auth", map[string]string{"pin": "1234"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin auth failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp models.AdminAuthResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	return resp.Token
 }
 
 func TestHealthHandler(t *testing.T) {
@@ -342,13 +367,14 @@ func TestGameStateHandler(t *testing.T) {
 
 func TestAddQuestionHandler(t *testing.T) {
 	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
 
-	w := doRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
+	w := doAdminRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
 		"text":     "Custom question?",
 		"options":  []string{"A", "B", "C"},
 		"answer":   1,
 		"category": "test",
-	})
+	}, token)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -357,27 +383,149 @@ func TestAddQuestionHandler(t *testing.T) {
 
 func TestAddQuestionHandler_Invalid(t *testing.T) {
 	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
 
 	// Missing text
-	w := doRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
+	w := doAdminRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
 		"text":    "",
 		"options": []string{"A"},
 		"answer":  0,
-	})
+	}, token)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
 
 	// Answer out of range
-	w = doRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
+	w = doAdminRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
 		"text":    "Q?",
 		"options": []string{"A", "B"},
 		"answer":  5,
-	})
+	}, token)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for bad answer index, got %d", w.Code)
+	}
+}
+
+func TestAddQuestionHandler_NoAuth(t *testing.T) {
+	_, mux := setupTestHandler(t)
+
+	w := doRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
+		"text":     "Q?",
+		"options":  []string{"A", "B"},
+		"answer":   0,
+		"category": "test",
+	})
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 without admin token, got %d", w.Code)
+	}
+}
+
+func TestAdminAuth(t *testing.T) {
+	_, mux := setupTestHandler(t)
+
+	// Wrong PIN
+	w := doRequest(mux, http.MethodPost, "/api/admin/auth", map[string]string{"pin": "wrong"})
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong PIN, got %d", w.Code)
+	}
+
+	// Correct PIN
+	w = doRequest(mux, http.MethodPost, "/api/admin/auth", map[string]string{"pin": "1234"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp models.AdminAuthResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Token == "" {
+		t.Error("expected non-empty token")
+	}
+}
+
+func TestKickPlayerHandler(t *testing.T) {
+	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
+
+	// Join a player
+	w := doRequest(mux, http.MethodPost, "/api/join", map[string]string{"nickname": "Alice"})
+	var player models.Player
+	json.Unmarshal(w.Body.Bytes(), &player)
+
+	// Kick player
+	w = doAdminRequest(mux, http.MethodPost, "/api/admin/kick", map[string]string{
+		"player_id": player.ID,
+	}, token)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify player is gone
+	w = doRequest(mux, http.MethodGet, "/api/players", nil)
+	var players []models.Player
+	json.Unmarshal(w.Body.Bytes(), &players)
+	if len(players) != 0 {
+		t.Errorf("expected 0 players after kick, got %d", len(players))
+	}
+}
+
+func TestSetTimerHandler(t *testing.T) {
+	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
+
+	w := doAdminRequest(mux, http.MethodPost, "/api/admin/timer", map[string]int{"time_limit": 30}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Invalid timer
+	w = doAdminRequest(mux, http.MethodPost, "/api/admin/timer", map[string]int{"time_limit": 3}, token)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for timer < 5, got %d", w.Code)
+	}
+}
+
+func TestDeleteQuestionHandler(t *testing.T) {
+	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
+
+	w := doAdminRequest(mux, http.MethodPost, "/api/questions/delete", map[string]int{"id": 1}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Delete non-existent
+	w = doAdminRequest(mux, http.MethodPost, "/api/questions/delete", map[string]int{"id": 9999}, token)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-existent, got %d", w.Code)
+	}
+}
+
+func TestEditQuestionHandler(t *testing.T) {
+	_, mux := setupTestHandler(t)
+	token := getAdminToken(t, mux)
+
+	w := doAdminRequest(mux, http.MethodPost, "/api/questions/edit", models.EditQuestionRequest{
+		ID: 2, Text: "Updated Q?", Options: []string{"X", "Y"}, Answer: 0, Category: "updated",
+	}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetCategoriesHandler(t *testing.T) {
+	_, mux := setupTestHandler(t)
+
+	w := doRequest(mux, http.MethodGet, "/api/categories", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var cats []string
+	json.Unmarshal(w.Body.Bytes(), &cats)
+	if len(cats) == 0 {
+		t.Error("expected non-empty categories")
 	}
 }
 
