@@ -51,9 +51,9 @@ func main() {
 		middleware.SecurityHeaders,
 	)
 
-	port := os.Getenv("PORT")
+	port := os.Getenv("QUIZHUB_PORT")
 	if port == "" {
-		port = "8080"
+		port = "8002"
 	}
 
 	srv := &http.Server{
