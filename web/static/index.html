@@ -1,73 +1,22 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>QuizHub</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-
-<style>
-body {
-  font-family: Arial;
-  text-align: center;
-  margin-top: 50px;
-}
-
-button {
-  padding: 10px 20px;
-  font-size: 18px;
-}
-
-input {
-  padding: 10px;
-  font-size: 18px;
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuizHub</title>
+  <meta name="description" content="Real-time multiplayer trivia game">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>?</text></svg>">
+  <link rel="stylesheet" href="app.css">
 </head>
-
 <body>
-
-<h1>QuizHub</h1>
-
-<div id="join">
-<h2>Join the Quiz</h2>
-
-<input id="nickname" placeholder="Enter your name">
-<br><br>
-
-<button onclick="joinQuiz()">Join</button>
-</div>
-
-<div id="joined" style="display:none">
-<h2>Waiting for question...</h2>
-</div>
-
-<script>
-
-let playerId = null
-
-async function joinQuiz() {
-
-  const nickname = document.getElementById("nickname").value
-
-  const res = await fetch("/join", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      nickname: nickname
-    })
-  })
-
-  const data = await res.json()
-
-  playerId = data.player_id
-
-  document.getElementById("join").style.display = "none"
-  document.getElementById("joined").style.display = "block"
-
-}
-
-</script>
-
+  <div class="app" id="app" data-testid="app-root">
+    <noscript>
+      <div style="text-align:center;padding:4rem 1rem;color:#94a3b8">
+        <h1>QuizHub</h1>
+        <p>JavaScript is required to play.</p>
+      </div>
+    </noscript>
+  </div>
+  <script src="app.js"></script>
 </body>
 </html>
