@@ -40,3 +40,6 @@
 ## Backlog
 - P1: MongoDB migration, room system
 - P2: Sound effects, dark/light toggle, avatars, confetti, streak bonuses
+
+## Documentation
+- [Jan 2026] Comprehensive README.md (544 lines) covering: features, tech stack, project structure, local setup, 3 deployment options (Docker, bare binary/VPS/systemd, Docker Compose + Caddy HTTPS), configuration, admin panel guide, full API reference (18 endpoints), WebSocket events, testing, troubleshooting
