@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from contextlib import asynccontextmanager
 
 GO_BINARY = os.path.join(os.path.dirname(__file__), "quizhub")
-GO_PORT = "8002"
+GO_PORT = os.getenv("GO_PORT", "8002")
 GO_URL = f"http://127.0.0.1:{GO_PORT}"
 GO_WS_URL = f"ws://127.0.0.1:{GO_PORT}"
 
