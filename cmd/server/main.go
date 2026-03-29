@@ -14,11 +14,11 @@ import (
 	"github.com/sakh1l/quizhub/internal/db"
 	"github.com/sakh1l/quizhub/internal/handlers"
 	"github.com/sakh1l/quizhub/internal/middleware"
+	"github.com/sakh1l/quizhub/internal/ws"
 	"github.com/sakh1l/quizhub/web"
 )
 
 func main() {
-	// Database path (default: quizhub.db in current directory)
 	dbPath := os.Getenv("QUIZHUB_DB")
 	if dbPath == "" {
 		dbPath = "quizhub.db"
@@ -30,10 +30,24 @@ func main() {
 	}
 	defer database.Close()
 
-	h := handlers.New(database)
+	hub := ws.NewHub()
+	go hub.Run()
+
+	h := handlers.New(database, hub)
 
 	mux := http.NewServeMux()
 	h.Register(mux)
+
+	// Additional admin route for category-based game start
+	mux.HandleFunc("/api/game/start-with-categories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte(`{"error":"method not allowed"}`))
+			return
+		}
+		h.StartGameWithCategories(w, r)
+	})
 
 	// Serve embedded static files
 	staticFS, err := fs.Sub(web.StaticFS, "static")
@@ -42,7 +56,6 @@ func main() {
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
-	// Apply middleware stack
 	handler := middleware.Chain(
 		mux,
 		middleware.Recover,
@@ -64,7 +77,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 

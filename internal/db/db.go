@@ -9,9 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
-
 	"github.com/sakh1l/quizhub/internal/models"
+	_ "modernc.org/sqlite"
 )
 
 // DB wraps the sql.DB connection and all data operations.
@@ -388,6 +387,138 @@ func (d *DB) AddQuestion(text string, options []string, answer int, category str
 	}
 	id, _ := res.LastInsertId()
 	return int(id), nil
+}
+
+// DeleteQuestion removes a question by ID.
+func (d *DB) DeleteQuestion(id int) error {
+	res, err := d.conn.Exec("DELETE FROM questions WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("question not found")
+	}
+	return nil
+}
+
+// UpdateQuestion updates an existing question.
+func (d *DB) UpdateQuestion(id int, text string, options []string, answer int, category string) error {
+	optsJSON, _ := json.Marshal(options)
+	category = strings.TrimSpace(category)
+	if category == "" {
+		category = "general"
+	}
+	res, err := d.conn.Exec(
+		"UPDATE questions SET text = ?, options = ?, answer = ?, category = ? WHERE id = ?",
+		text, string(optsJSON), answer, category, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("question not found")
+	}
+	return nil
+}
+
+// GetCategories returns distinct question categories.
+func (d *DB) GetCategories() ([]string, error) {
+	rows, err := d.conn.Query("SELECT DISTINCT category FROM questions ORDER BY category")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cats []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cats = append(cats, c)
+	}
+	if cats == nil {
+		cats = []string{}
+	}
+	return cats, rows.Err()
+}
+
+// GetQuestionIDsByCategories returns question IDs filtered by categories in random order.
+func (d *DB) GetQuestionIDsByCategories(categories []string) ([]int, error) {
+	if len(categories) == 0 {
+		return d.GetQuestionIDs()
+	}
+	placeholders := ""
+	args := make([]interface{}, len(categories))
+	for i, c := range categories {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args[i] = c
+	}
+	rows, err := d.conn.Query("SELECT id FROM questions WHERE category IN ("+placeholders+") ORDER BY RANDOM()", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeletePlayer removes a player and their answers.
+func (d *DB) DeletePlayer(id string) error {
+	d.conn.Exec("DELETE FROM answers WHERE player_id = ?", id)
+	res, err := d.conn.Exec("DELETE FROM players WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("player not found")
+	}
+	return nil
+}
+
+// GetAnswerStats returns answer statistics for a question.
+func (d *DB) GetAnswerStats(questionID int) (total, correct, wrong int) {
+	d.conn.QueryRow(
+		"SELECT COUNT(*), COALESCE(SUM(correct),0) FROM answers WHERE question_id = ?",
+		questionID,
+	).Scan(&total, &correct)
+	wrong = total - correct
+	return
+}
+
+// ListAllQuestions returns all questions.
+func (d *DB) ListAllQuestions() ([]models.Question, error) {
+	rows, err := d.conn.Query("SELECT id, text, options, answer, category FROM questions ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var questions []models.Question
+	for rows.Next() {
+		var q models.Question
+		var optsJSON string
+		if err := rows.Scan(&q.ID, &q.Text, &optsJSON, &q.Answer, &q.Category); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(optsJSON), &q.Options)
+		questions = append(questions, q)
+	}
+	if questions == nil {
+		questions = []models.Question{}
+	}
+	return questions, rows.Err()
 }
 
 // Conn exposes the raw connection for testing.

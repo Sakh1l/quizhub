@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "npx serve -s public -l 3000 --no-clipboard"
+    "start": "npx serve public -l 3000 --no-clipboard"
   },
   "dependencies": {
     "serve": "^14.2.0"

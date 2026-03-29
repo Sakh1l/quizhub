@@ -20,6 +20,8 @@ class QuizHubAPITester:
         self.player_id = None
         self.player_nickname = None
         self.current_question_id = None
+        self.admin_token = None
+        self.test_question_id = None
         
     def log(self, message, level="INFO"):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -303,6 +305,190 @@ class QuizHubAPITester:
                 
         return success
     
+    def test_admin_auth_correct_pin(self):
+        """Test POST /api/admin/auth with correct PIN"""
+        success, data = self.run_test(
+            "Admin Auth (Correct PIN)",
+            "POST",
+            "admin/auth",
+            200,
+            data={"pin": "1234"},
+            description="Should return admin token for correct PIN"
+        )
+        
+        if success:
+            if 'token' not in data:
+                self.log("❌ Missing token in admin auth response", "ERROR")
+                return False
+            
+            # Store admin token for protected endpoint tests
+            self.admin_token = data['token']
+            self.session.headers.update({'X-Admin-Token': self.admin_token})
+            self.log(f"   Admin token obtained: {self.admin_token[:20]}...")
+            
+        return success
+    
+    def test_admin_auth_wrong_pin(self):
+        """Test POST /api/admin/auth with wrong PIN"""
+        # Temporarily remove admin token for this test
+        old_token = self.session.headers.pop('X-Admin-Token', None)
+        
+        success, data = self.run_test(
+            "Admin Auth (Wrong PIN)",
+            "POST",
+            "admin/auth",
+            401,
+            data={"pin": "wrong"},
+            description="Should return 401 for wrong PIN"
+        )
+        
+        # Restore admin token
+        if old_token:
+            self.session.headers['X-Admin-Token'] = old_token
+            
+        return success
+    
+    def test_admin_protected_without_token(self):
+        """Test admin-protected endpoint without token"""
+        # Temporarily remove admin token
+        old_token = self.session.headers.pop('X-Admin-Token', None)
+        
+        success, data = self.run_test(
+            "Admin Protected (No Token)",
+            "POST",
+            "admin/timer",
+            401,
+            data={"time_limit": 20},
+            description="Should return 401 without admin token"
+        )
+        
+        # Restore admin token
+        if old_token:
+            self.session.headers['X-Admin-Token'] = old_token
+            
+        return success
+    
+    def test_admin_set_timer(self):
+        """Test POST /api/admin/timer with valid token"""
+        success, data = self.run_test(
+            "Admin Set Timer",
+            "POST",
+            "admin/timer",
+            200,
+            data={"time_limit": 20},
+            description="Should set timer with valid admin token"
+        )
+        
+        if success:
+            if data.get('time_limit') != 20:
+                self.log(f"❌ Expected time_limit 20, got {data.get('time_limit')}", "ERROR")
+                return False
+                
+        return success
+    
+    def test_get_categories(self):
+        """Test GET /api/categories"""
+        success, data = self.run_test(
+            "Get Categories",
+            "GET",
+            "categories",
+            200,
+            description="Should return list of question categories"
+        )
+        
+        if success:
+            if not isinstance(data, list):
+                self.log("❌ Categories response should be an array", "ERROR")
+                return False
+                
+        return success
+    
+    def test_add_question(self):
+        """Test POST /api/questions/add with valid token"""
+        test_question = {
+            "text": "Test question for API testing?",
+            "options": ["Option A", "Option B", "Option C", "Option D"],
+            "answer": 1,
+            "category": "test"
+        }
+        
+        success, data = self.run_test(
+            "Add Question",
+            "POST",
+            "questions/add",
+            201,
+            data=test_question,
+            description="Should add question with valid admin token"
+        )
+        
+        if success:
+            if 'id' not in data:
+                self.log("❌ Missing question id in response", "ERROR")
+                return False
+            
+            # Store question ID for delete test
+            self.test_question_id = data['id']
+            self.log(f"   Question created with ID: {self.test_question_id}")
+            
+        return success
+    
+    def test_delete_question(self):
+        """Test POST /api/questions/delete with valid token"""
+        if not hasattr(self, 'test_question_id'):
+            self.log("❌ No test question ID available for delete test", "ERROR")
+            return False
+            
+        success, data = self.run_test(
+            "Delete Question",
+            "POST",
+            "questions/delete",
+            200,
+            data={"id": self.test_question_id},
+            description="Should delete question with valid admin token"
+        )
+        
+        if success:
+            if data.get('status') != 'deleted':
+                self.log(f"❌ Expected status 'deleted', got '{data.get('status')}'", "ERROR")
+                return False
+                
+        return success
+    
+    def test_websocket_endpoint(self):
+        """Test WebSocket endpoint accessibility"""
+        import websocket
+        import ssl
+        
+        try:
+            # Test WebSocket connection
+            ws_url = self.base_url.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws?role=player'
+            
+            self.log("🔍 Testing WebSocket Connection")
+            self.log(f"   WebSocket URL: {ws_url}")
+            
+            # Create WebSocket connection with SSL context for wss://
+            ws = websocket.create_connection(
+                ws_url,
+                timeout=10,
+                sslopt={"cert_reqs": ssl.CERT_NONE} if ws_url.startswith('wss://') else None
+            )
+            
+            # Send a test message (though the Go server might not respond to arbitrary messages)
+            ws.send('{"test": "connection"}')
+            
+            # Close connection
+            ws.close()
+            
+            self.tests_run += 1
+            self.tests_passed += 1
+            self.log("✅ PASSED - WebSocket connection successful", "SUCCESS")
+            return True
+            
+        except Exception as e:
+            self.tests_run += 1
+            self.log(f"❌ FAILED - WebSocket connection failed: {str(e)}", "ERROR")
+            return False
+    
     def run_all_tests(self):
         """Run all API tests in sequence"""
         self.log("🚀 Starting QuizHub API Tests")
@@ -318,7 +504,16 @@ class QuizHubAPITester:
             self.test_answer_duplicate,
             self.test_get_leaderboard,
             self.test_next_question,
-            self.test_reset_game
+            self.test_reset_game,
+            # Admin functionality tests
+            self.test_admin_auth_correct_pin,
+            self.test_admin_auth_wrong_pin,
+            self.test_admin_protected_without_token,
+            self.test_admin_set_timer,
+            self.test_get_categories,
+            self.test_add_question,
+            self.test_delete_question,
+            self.test_websocket_endpoint
         ]
         
         for test_method in test_methods:

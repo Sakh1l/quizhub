@@ -1,6 +1,6 @@
 /* =========================================================
    QuizHub - app.js
-   Client-side logic for the quiz game
+   Client-side logic with WebSocket real-time sync
    ========================================================= */
 
 (function () {
@@ -13,13 +13,13 @@
   let timerInterval = null;
   let selectedAnswer = null;
   let answerResult = null;
-  let pollInterval = null;
+  let socket = null;
+  let reconnectTimer = null;
 
-  const API = '';  // same origin
+  const API = '';
 
   // ---- DOM helpers ----
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
 
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -50,13 +50,129 @@
     return data;
   }
 
+  // ---- WebSocket ----
+  function connectWS() {
+    if (socket && socket.readyState <= 1) return;
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/api/ws?role=player&player_id=${playerId || ''}`;
+
+    socket = new WebSocket(url);
+
+    socket.onopen = () => {
+      clearTimeout(reconnectTimer);
+    };
+
+    socket.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        handleWSMessage(msg);
+      } catch (_) {}
+    };
+
+    socket.onclose = () => {
+      reconnectTimer = setTimeout(connectWS, 3000);
+    };
+
+    socket.onerror = () => {
+      socket.close();
+    };
+  }
+
+  function handleWSMessage(msg) {
+    switch (msg.event) {
+      case 'game_started':
+      case 'new_question':
+        gameState = msg.data;
+        selectedAnswer = null;
+        answerResult = null;
+        renderApp();
+        break;
+
+      case 'game_finished':
+        gameState = msg.data;
+        selectedAnswer = null;
+        answerResult = null;
+        renderApp();
+        break;
+
+      case 'game_reset':
+        gameState = { status: 'lobby' };
+        selectedAnswer = null;
+        answerResult = null;
+        renderApp();
+        break;
+
+      case 'leaderboard_update':
+        // Update leaderboard if on that screen
+        if (gameState && gameState.status === 'finished') {
+          updateLeaderboardList(msg.data);
+        }
+        break;
+
+      case 'players_update':
+        updatePlayerList(msg.data);
+        break;
+
+      case 'player_kicked':
+        if (msg.data && msg.data.message) {
+          playerId = null;
+          playerNickname = '';
+          gameState = null;
+          renderApp();
+          setTimeout(() => {
+            const err = $('[data-testid="join-error"]');
+            if (err) err.textContent = 'You were removed from the game';
+          }, 100);
+        }
+        break;
+    }
+  }
+
+  function updatePlayerList(players) {
+    const list = $('[data-testid="player-list"]');
+    if (!list) return;
+    list.innerHTML = '';
+    (players || []).forEach(p => {
+      const isYou = p.player_id === playerId;
+      list.appendChild(
+        el('li', {
+          className: 'player-chip' + (isYou ? ' you' : ''),
+          'data-testid': 'player-chip',
+        }, p.nickname + (isYou ? ' (you)' : ''))
+      );
+    });
+  }
+
+  function updateLeaderboardList(entries) {
+    const list = $('[data-testid="leaderboard-list"]');
+    if (!list) return;
+    list.innerHTML = '';
+    (entries || []).forEach((e, i) => {
+      const isYou = e.player_id === playerId;
+      let rankCls = 'rank';
+      let entryCls = 'leaderboard-entry';
+      if (i === 0) { rankCls += ' gold'; entryCls += ' top-1'; }
+      else if (i === 1) { rankCls += ' silver'; entryCls += ' top-2'; }
+      else if (i === 2) { rankCls += ' bronze'; entryCls += ' top-3'; }
+      if (isYou) entryCls += ' you';
+
+      list.appendChild(
+        el('li', { className: entryCls, 'data-testid': `leaderboard-entry-${i}` },
+          el('span', { className: rankCls }, `#${e.rank}`),
+          el('span', { className: 'entry-name' }, e.nickname + (isYou ? ' (you)' : '')),
+          el('span', { className: 'entry-score' }, String(e.score)),
+        )
+      );
+    });
+  }
+
   // ---- Screens ----
 
   function renderApp() {
     const app = $('#app');
     app.innerHTML = '';
 
-    // Header
     const header = el('header', { className: 'header' },
       el('h1', null, 'QuizHub'),
       el('p', null, playerId
@@ -77,8 +193,6 @@
   }
 
   function renderJoinScreen(app) {
-    let errorMsg = '';
-
     const card = el('div', { className: 'card join-screen', 'data-testid': 'join-screen' },
       el('h2', null, 'Join the Quiz'),
       el('p', { className: 'subtitle' }, 'Enter your nickname to get started'),
@@ -100,7 +214,6 @@
     );
     app.appendChild(card);
 
-    // Focus input
     setTimeout(() => {
       const inp = $('#nickname-input');
       if (inp) {
@@ -135,7 +248,11 @@
       });
       playerId = data.player_id;
       playerNickname = nickname;
-      startPolling();
+      connectWS();
+      // Fetch current game state
+      try {
+        gameState = await api('/api/game/state');
+      } catch (_) {}
       renderApp();
     } catch (err) {
       errorEl.textContent = err.message || 'Failed to join';
@@ -147,7 +264,7 @@
   async function renderLobby(app) {
     const card = el('div', { className: 'card lobby-screen', 'data-testid': 'lobby-screen' },
       el('h2', null, 'Lobby'),
-      el('p', { className: 'lobby-info' }, 'Waiting for players to join...'),
+      el('p', { className: 'lobby-info' }, 'Waiting for the host to start the game...'),
       el('ul', { className: 'player-list', 'data-testid': 'player-list' }),
       el('div', { className: 'lobby-actions' },
         el('button', {
@@ -159,23 +276,10 @@
     );
     app.appendChild(card);
 
-    // Load players
     try {
       const players = await api('/api/players');
-      const list = $('[data-testid="player-list"]');
-      list.innerHTML = '';
-      players.forEach(p => {
-        const isYou = p.player_id === playerId;
-        list.appendChild(
-          el('li', {
-            className: 'player-chip' + (isYou ? ' you' : ''),
-            'data-testid': 'player-chip',
-          }, p.nickname + (isYou ? ' (you)' : ''))
-        );
-      });
-    } catch (_) {
-      // silently fail, will retry on next poll
-    }
+      updatePlayerList(players);
+    } catch (_) {}
   }
 
   async function handleStartGame() {
@@ -191,7 +295,6 @@
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'Start Game';
-      alert(err.message);
     }
   }
 
@@ -214,11 +317,7 @@
         el('span', { className: 'category-tag', 'data-testid': 'category-tag' }, q.category || 'general'),
       ),
       el('div', { className: 'timer-bar' },
-        el('div', {
-          className: 'timer-fill',
-          id: 'timer-fill',
-          'data-testid': 'timer-fill',
-        })
+        el('div', { className: 'timer-fill', id: 'timer-fill', 'data-testid': 'timer-fill' })
       ),
       el('p', { className: 'question-text', 'data-testid': 'question-text' }, q.text),
       el('div', { className: 'options-grid', 'data-testid': 'options-grid' },
@@ -242,7 +341,6 @@
       ),
     );
 
-    // Show result toast if answered
     if (answerResult) {
       const isCorrect = answerResult.correct;
       card.appendChild(
@@ -273,7 +371,7 @@
 
   function startTimer() {
     clearInterval(timerInterval);
-    if (answerResult) return; // don't run timer after answering
+    if (answerResult) return;
 
     const fill = $('#timer-fill');
     if (!fill || !gameState) return;
@@ -295,9 +393,8 @@
       update();
       if (timeLeft <= 0) {
         clearInterval(timerInterval);
-        // Auto-submit wrong if not answered
         if (!answerResult) {
-          handleAnswer(-1); // timeout: wrong answer
+          handleAnswer(-1);
         }
       }
     }, 1000);
@@ -332,7 +429,7 @@
       answerResult = null;
       renderApp();
     } catch (err) {
-      if (err.message.includes('not active')) {
+      if (err.message && err.message.includes('not active')) {
         gameState = { status: 'finished' };
         renderApp();
       }
@@ -356,28 +453,8 @@
 
     try {
       const entries = await api('/api/leaderboard');
-      const list = $('[data-testid="leaderboard-list"]');
-      list.innerHTML = '';
-      entries.forEach((e, i) => {
-        const isYou = e.player_id === playerId;
-        let rankCls = 'rank';
-        let entryCls = 'leaderboard-entry';
-        if (i === 0) { rankCls += ' gold'; entryCls += ' top-1'; }
-        else if (i === 1) { rankCls += ' silver'; entryCls += ' top-2'; }
-        else if (i === 2) { rankCls += ' bronze'; entryCls += ' top-3'; }
-        if (isYou) entryCls += ' you';
-
-        list.appendChild(
-          el('li', { className: entryCls, 'data-testid': `leaderboard-entry-${i}` },
-            el('span', { className: rankCls }, `#${e.rank}`),
-            el('span', { className: 'entry-name' }, e.nickname + (isYou ? ' (you)' : '')),
-            el('span', { className: 'entry-score' }, String(e.score)),
-          )
-        );
-      });
-    } catch (_) {
-      // retry on next render
-    }
+      updateLeaderboardList(entries);
+    } catch (_) {}
   }
 
   async function handlePlayAgain() {
@@ -386,7 +463,6 @@
       gameState = { status: 'lobby' };
       selectedAnswer = null;
       answerResult = null;
-      // Keep player identity, re-join
       try {
         await api('/api/join', {
           method: 'POST',
@@ -395,37 +471,8 @@
       } catch (_) {}
       renderApp();
     } catch (err) {
-      alert('Failed to reset: ' + err.message);
+      // silent
     }
-  }
-
-  // ---- Polling ----
-  function startPolling() {
-    stopPolling();
-    pollInterval = setInterval(async () => {
-      try {
-        const state = await api('/api/game/state');
-        // Only update if state changed meaningfully
-        if (!gameState || state.status !== gameState.status ||
-            state.question_index !== gameState.question_index) {
-          // Don't override during active answering
-          if (answerResult && state.status === 'question' &&
-              gameState && state.question_index === gameState.question_index) {
-            return;
-          }
-          if (state.status !== gameState?.status || state.question_index !== gameState?.question_index) {
-            selectedAnswer = null;
-            answerResult = null;
-          }
-          gameState = state;
-          renderApp();
-        }
-      } catch (_) {}
-    }, 2000);
-  }
-
-  function stopPolling() {
-    clearInterval(pollInterval);
   }
 
   // ---- Init ----
