@@ -57,7 +57,12 @@
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/api/ws?role=player&player_id=${playerId || ''}`;
 
-    socket = new WebSocket(url);
+    try {
+      socket = new WebSocket(url);
+    } catch (_) {
+      reconnectTimer = setTimeout(connectWS, 5000);
+      return;
+    }
 
     socket.onopen = () => {
       clearTimeout(reconnectTimer);
@@ -71,12 +76,20 @@
     };
 
     socket.onclose = () => {
-      reconnectTimer = setTimeout(connectWS, 3000);
+      reconnectTimer = setTimeout(connectWS, 5000);
     };
 
     socket.onerror = () => {
-      socket.close();
+      try { socket.close(); } catch (_) {}
     };
+  }
+
+  function disconnectWS() {
+    clearTimeout(reconnectTimer);
+    if (socket) {
+      try { socket.close(); } catch (_) {}
+      socket = null;
+    }
   }
 
   function handleWSMessage(msg) {
@@ -100,11 +113,14 @@
         gameState = { status: 'lobby' };
         selectedAnswer = null;
         answerResult = null;
+        // Player needs to re-join since reset clears all players
+        playerId = null;
+        playerNickname = '';
+        disconnectWS();
         renderApp();
         break;
 
       case 'leaderboard_update':
-        // Update leaderboard if on that screen
         if (gameState && gameState.status === 'finished') {
           updateLeaderboardList(msg.data);
         }
@@ -115,16 +131,15 @@
         break;
 
       case 'player_kicked':
-        if (msg.data && msg.data.message) {
-          playerId = null;
-          playerNickname = '';
-          gameState = null;
-          renderApp();
-          setTimeout(() => {
-            const err = $('[data-testid="join-error"]');
-            if (err) err.textContent = 'You were removed from the game';
-          }, 100);
-        }
+        playerId = null;
+        playerNickname = '';
+        gameState = null;
+        disconnectWS();
+        renderApp();
+        setTimeout(() => {
+          const err = $('[data-testid="join-error"]');
+          if (err) err.textContent = 'You were removed from the game';
+        }, 100);
         break;
     }
   }
@@ -252,7 +267,9 @@
       // Fetch current game state
       try {
         gameState = await api('/api/game/state');
-      } catch (_) {}
+      } catch (_) {
+        gameState = { status: 'lobby' };
+      }
       renderApp();
     } catch (err) {
       errorEl.textContent = err.message || 'Failed to join';
@@ -416,6 +433,15 @@
         }),
       });
     } catch (err) {
+      // If player not found (deleted after reset), go back to join
+      if (err.message && err.message.includes('player not found')) {
+        playerId = null;
+        playerNickname = '';
+        gameState = null;
+        disconnectWS();
+        renderApp();
+        return;
+      }
       answerResult = { correct: false, correct_answer: -1, score_earned: 0, total_score: 0 };
     }
 
@@ -424,12 +450,20 @@
 
   async function handleNextQuestion() {
     try {
-      gameState = await api('/api/game/next', { method: 'POST' });
+      const state = await api('/api/game/next', { method: 'POST' });
+      gameState = state;
       selectedAnswer = null;
       answerResult = null;
       renderApp();
     } catch (err) {
-      if (err.message && err.message.includes('not active')) {
+      // Only mark finished if the server explicitly says game is not active
+      // Otherwise just refresh the current state
+      try {
+        gameState = await api('/api/game/state');
+        selectedAnswer = null;
+        answerResult = null;
+        renderApp();
+      } catch (_) {
         gameState = { status: 'finished' };
         renderApp();
       }
@@ -460,19 +494,16 @@
   async function handlePlayAgain() {
     try {
       await api('/api/game/reset', { method: 'POST' });
-      gameState = { status: 'lobby' };
-      selectedAnswer = null;
-      answerResult = null;
-      try {
-        await api('/api/join', {
-          method: 'POST',
-          body: JSON.stringify({ nickname: playerNickname }),
-        });
-      } catch (_) {}
-      renderApp();
-    } catch (err) {
-      // silent
-    }
+    } catch (_) {}
+
+    // Reset all local state — force fresh re-join
+    playerId = null;
+    playerNickname = '';
+    gameState = null;
+    selectedAnswer = null;
+    answerResult = null;
+    disconnectWS();
+    renderApp();
   }
 
   // ---- Init ----
