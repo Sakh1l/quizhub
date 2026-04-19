@@ -1,6 +1,6 @@
 # QuizHub
 
-A real-time multiplayer trivia game shipped as a **single Go binary** with an embedded SQLite database, embedded frontend, WebSocket live sync, and a full admin panel.
+A real-time multiplayer trivia game shipped as a **single Go binary** with an embedded SQLite database, embedded frontend, WebSocket live sync, room codes, and a full admin panel.
 
 Zero runtime dependencies. One binary. One command. Done.
 
@@ -8,6 +8,7 @@ Zero runtime dependencies. One binary. One command. Done.
 
 ## Table of Contents
 
+- [How It Works](#how-it-works)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -16,9 +17,12 @@ Zero runtime dependencies. One binary. One command. Done.
 - [Deployment](#deployment)
   - [Option A: Docker (Recommended)](#option-a-docker-recommended)
   - [Option B: Bare Binary on a VPS](#option-b-bare-binary-on-a-vps)
-  - [Option C: Docker Compose (with reverse proxy)](#option-c-docker-compose-with-reverse-proxy)
+  - [Option C: Docker Compose (with HTTPS)](#option-c-docker-compose-with-https)
 - [Configuration](#configuration)
-- [Admin Panel](#admin-panel)
+- [Game Flow](#game-flow)
+  - [Admin Flow](#admin-flow)
+  - [Player Flow](#player-flow)
+  - [Scoring](#scoring)
 - [API Reference](#api-reference)
 - [WebSocket Events](#websocket-events)
 - [Running Tests](#running-tests)
@@ -27,33 +31,82 @@ Zero runtime dependencies. One binary. One command. Done.
 
 ---
 
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ADMIN (/admin.html)            PLAYERS (/)                 │
+│                                                             │
+│  1. Enter PIN ──────────┐                                   │
+│  2. Add questions       │                                   │
+│  3. Create Quiz Room ───┼──→ Room Code: A3X7K2              │
+│     (get code + link)   │    Link: yoursite.com/?room=A3X7K2│
+│                         │                                   │
+│  4. Share code ─────────┼──→ 5. Enter code + name ──→ Join  │
+│                         │                                   │
+│  6. See players join    │    7. See lobby + other players    │
+│  8. Click Start Game ───┼──→ 9. 10-sec countdown            │
+│                         │                                   │
+│  10. See question +     │    11. See question + options      │
+│      timer + leaderboard│        Pick answer (locked in)    │
+│      + answer stats     │                                   │
+│                         │                                   │
+│  12. Timer expires ─────┼──→ 13. Correct answer revealed    │
+│      (auto-reveal)      │        Score shown                │
+│                         │                                   │
+│  14. Click Next Question┼──→ 15. Next question appears      │
+│      ...repeat...       │        ...repeat...               │
+│                         │                                   │
+│  16. Game Over ─────────┼──→ 17. See personal rank (#1, #2) │
+│      Full leaderboard   │                                   │
+│  18. Create New Quiz    │                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Features
 
-**Player Experience**
-- Join with a nickname and play live trivia
-- Timed questions with countdown bar (configurable 5-120 seconds)
-- Speed-based scoring: faster correct answers earn more points (100-1000)
-- Instant answer feedback (correct/wrong) with score reveal
-- Live leaderboard with gold/silver/bronze rankings
-- Real-time updates via WebSocket (no polling)
+**Room System**
+- Admin creates a quiz room with a unique 6-character code (e.g., `A3X7K2`)
+- Shareable join link: `yoursite.com/?room=A3X7K2` — pre-fills the code for players
+- One room at a time — simple, no conflicts
 
 **Admin Panel** (`/admin.html`)
-- PIN-protected access
-- Start, advance, and reset games
-- Live answer stats (correct/wrong counts in real time)
-- Player management with kick functionality
-- Full question CRUD (add, edit, delete)
-- Timer configuration (5-120 seconds per question)
-- 15 built-in questions across 6 categories (geography, science, math, history, literature, technology)
-- WebSocket connection status indicator
+- PIN-protected access (default: `1234`)
+- Add custom questions from scratch for each quiz (text, 4 options, correct answer)
+- Set question timer (5–120 seconds)
+- Create quiz room → get room code + shareable link
+- See players join in real time
+- Start game → 10-second "Get Ready" countdown
+- During game: see current question, countdown timer, live leaderboard, answer stats (correct/wrong count)
+- Advance to next question manually (admin controls pacing)
+- Game over: see full final leaderboard
+- Create new quiz (resets everything for a fresh start)
+
+**Player Experience** (`/`)
+- Enter room code + nickname to join
+- No control buttons — admin runs the entire game
+- See questions + answer options + countdown timer
+- Pick an answer → "Answer locked!" confirmation → wait for timer
+- Correct answer revealed to everyone when timer expires
+- See personal result (correct/wrong + score earned)
+- Game over: see personal rank and total score
+
+**Scoring**
+- Millisecond precision — faster correct answers earn more points
+- Score range: 0–1000 per question
+- Formula: `score = 1000 × (time_remaining / total_time)`
+- Example: 15-second timer, answer in 0.35 seconds → score ≈ 977
+- Wrong answers = 0 points
+- Leaderboard ranks by total cumulative score
 
 **Architecture**
-- Single binary distribution (14 MB) with everything embedded
+- Single binary (14 MB) with everything embedded
 - SQLite database created automatically at startup
-- No external services needed (no Redis, no Postgres, no message queue)
-- Graceful shutdown with signal handling
-- Structured logging, CORS, security headers, panic recovery
-- 38 Go unit tests with 82% DB and 72% handler coverage
+- Real-time sync via WebSocket (gorilla/websocket)
+- Server-side timers for countdown and question time limits
+- No external services needed
 
 ---
 
@@ -77,30 +130,29 @@ quizhub/
 │   └── main.go                 # Entry point: wires DB, WebSocket hub, routes, server
 ├── internal/
 │   ├── db/
-│   │   ├── db.go               # SQLite connection, migrations, seed data, all queries
-│   │   └── db_test.go          # 14 database unit tests
+│   │   ├── db.go               # SQLite: migrations, room code, players, questions, answers
+│   │   └── db_test.go          # Database unit tests
 │   ├── handlers/
-│   │   ├── handlers.go         # All HTTP handlers (public, game, admin)
-│   │   └── handlers_test.go    # 24 handler unit tests (incl. admin auth, kick, CRUD)
+│   │   ├── handlers.go         # HTTP handlers: room, join, game, admin, questions
+│   │   └── handlers_test.go    # Handler unit tests
 │   ├── middleware/
-│   │   └── middleware.go       # CORS, logging, panic recovery, security headers
+│   │   └── middleware.go       # CORS, logging, recovery, security headers, WebSocket support
 │   ├── models/
-│   │   └── models.go           # All data structures (Player, Question, GameState, etc.)
+│   │   └── models.go           # Data structures
 │   └── ws/
-│       └── hub.go              # WebSocket hub: connection manager, broadcast, events
+│       └── hub.go              # WebSocket hub: connections, broadcast, per-player messaging
 ├── web/
-│   ├── embed.go                # go:embed directive for static files
+│   ├── embed.go                # go:embed directive
 │   └── static/
-│       ├── index.html          # Player UI entry point
-│       ├── app.css             # Player UI styles
-│       ├── app.js              # Player UI logic + WebSocket client
-│       ├── admin.html          # Admin panel entry point
-│       ├── admin.css           # Admin panel styles
-│       └── admin.js            # Admin panel logic + WebSocket client
-├── Dockerfile                  # Multi-stage build (golang:1.24 -> alpine:3.21)
+│       ├── index.html          # Player page (room code + name entry)
+│       ├── app.css             # Player styles
+│       ├── app.js              # Player logic + WebSocket client
+│       ├── admin.html          # Admin panel
+│       ├── admin.css           # Admin styles
+│       └── admin.js            # Admin logic + WebSocket client
+├── Dockerfile                  # Multi-stage build (golang:1.24 → alpine:3.21)
 ├── Makefile                    # build, run, test, fmt, lint, clean
-├── go.mod
-├── go.sum
+├── go.mod / go.sum
 ├── LICENSE                     # MIT
 └── README.md
 ```
@@ -111,7 +163,7 @@ quizhub/
 
 - **Go 1.24+** (for building from source)
 - **Docker** (for containerized deployment) — OR —
-- Any Linux/macOS/Windows machine (for running the pre-built binary)
+- Any Linux/macOS/Windows machine (for running the binary)
 
 > SQLite is compiled into the binary. No database server needed.
 
@@ -119,48 +171,37 @@ quizhub/
 
 ## Getting Started (Local)
 
-### 1. Clone the repository
+### 1. Clone and build
 
 ```bash
 git clone https://github.com/sakh1l/quizhub.git
 cd quizhub
+make build    # or: go build -o quizhub ./cmd/server
 ```
 
-### 2. Build
-
-```bash
-make build
-# or: go build -o quizhub ./cmd/server
-```
-
-This produces a single `quizhub` binary in the project root.
-
-### 3. Run
+### 2. Run
 
 ```bash
 ./quizhub
 ```
 
-Output:
+Output: `QuizHub v1.0.0 running on http://localhost:8080`
 
-```
-QuizHub v1.0.0 running on http://localhost:8080
-```
+### 3. Open in browser
 
-### 4. Open in browser
+| URL                              | Who          |
+|----------------------------------|--------------|
+| `http://localhost:8080`          | Players      |
+| `http://localhost:8080/admin.html` | Quiz host  |
 
-| URL                        | What it does         |
-|----------------------------|----------------------|
-| `http://localhost:8080`    | Player join screen   |
-| `http://localhost:8080/admin.html` | Admin panel (PIN: `1234`) |
+### 4. Run a quiz
 
-### 5. Play
-
-1. Open the player URL in 2+ browser tabs
-2. Enter nicknames and click **Join Game**
-3. Open the admin panel in another tab, enter PIN `1234`
-4. Click **Start Game** from the admin dashboard
-5. Answer questions — scores update in real time
+1. **Admin**: Open `/admin.html` → enter PIN `1234`
+2. **Admin**: Add a few questions using the form
+3. **Admin**: Click **Create Quiz Room** → copy the room code
+4. **Players**: Open `/` → enter room code + nickname → click **Join Room**
+5. **Admin**: Click **Start Game** when everyone's in
+6. **Everyone**: Answer questions, watch scores, have fun!
 
 ---
 
@@ -168,21 +209,11 @@ QuizHub v1.0.0 running on http://localhost:8080
 
 ### Option A: Docker (Recommended)
 
-The simplest way to deploy. One command builds and runs everything.
-
-#### Step 1: Build the image
-
 ```bash
+# Build
 docker build -t quizhub .
-```
 
-This runs a multi-stage build:
-- **Stage 1** (`golang:1.24-alpine`): Downloads dependencies, compiles the binary with `-ldflags="-s -w"` (stripped, smaller)
-- **Stage 2** (`alpine:3.21`): Copies only the binary into a minimal 14 MB image
-
-#### Step 2: Run the container
-
-```bash
+# Run
 docker run -d \
   --name quizhub \
   -p 8080:8080 \
@@ -191,62 +222,21 @@ docker run -d \
   quizhub
 ```
 
-| Flag | Purpose |
-|------|---------|
-| `-d` | Run in background |
-| `-p 8080:8080` | Map container port 8080 to host port 8080 |
-| `-v quizhub-data:/app/data` | Persist SQLite database across container restarts |
-| `-e QUIZHUB_ADMIN_PIN=...` | Set admin PIN (default: `1234`) |
-
-#### Step 3: Verify
-
-```bash
-curl http://localhost:8080/api/health
-# {"status":"ok","version":"1.0.0","player_count":0}
-```
+Verify: `curl http://localhost:8080/api/health`
 
 Open `http://your-server-ip:8080` in a browser.
 
-#### Step 4: Stop / Remove
-
-```bash
-docker stop quizhub
-docker rm quizhub
-```
-
----
-
 ### Option B: Bare Binary on a VPS
 
-No Docker needed. Download or build the binary, copy it to your server, and run.
-
-#### Step 1: Build for your target OS/architecture
-
 ```bash
-# Linux AMD64 (most cloud VPS)
+# Build for your target
 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o quizhub ./cmd/server
 
-# Linux ARM64 (AWS Graviton, Raspberry Pi 4)
-GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o quizhub ./cmd/server
-
-# macOS Apple Silicon
-GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o quizhub ./cmd/server
-
-# Windows
-GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o quizhub.exe ./cmd/server
-```
-
-#### Step 2: Copy to server
-
-```bash
+# Copy to server
 scp quizhub user@your-server:/opt/quizhub/
-```
 
-#### Step 3: Create a systemd service (Linux)
-
-Create `/etc/systemd/system/quizhub.service`:
-
-```ini
+# Create systemd service
+sudo tee /etc/systemd/system/quizhub.service << 'EOF'
 [Unit]
 Description=QuizHub Trivia Game
 After=network.target
@@ -257,30 +247,20 @@ User=quizhub
 WorkingDirectory=/opt/quizhub
 ExecStart=/opt/quizhub/quizhub
 Restart=on-failure
-RestartSec=5
-
 Environment=QUIZHUB_PORT=8080
 Environment=QUIZHUB_DB=/opt/quizhub/data/quizhub.db
 Environment=QUIZHUB_ADMIN_PIN=your-secret-pin
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-#### Step 4: Enable and start
-
-```bash
-sudo mkdir -p /opt/quizhub/data
-sudo useradd -r -s /bin/false quizhub
-sudo chown -R quizhub:quizhub /opt/quizhub
-
+# Start
 sudo systemctl daemon-reload
-sudo systemctl enable quizhub
-sudo systemctl start quizhub
-sudo systemctl status quizhub
+sudo systemctl enable --now quizhub
 ```
 
-#### Step 5: (Optional) Add Nginx reverse proxy for HTTPS
+**Add Nginx + HTTPS** (important for WebSocket):
 
 ```nginx
 server {
@@ -290,11 +270,8 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
-
-        # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -303,40 +280,27 @@ server {
 }
 ```
 
-Then use Certbot for HTTPS:
+Then: `sudo certbot --nginx -d quiz.yourdomain.com`
 
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d quiz.yourdomain.com
-```
-
----
-
-### Option C: Docker Compose (with reverse proxy)
-
-For production setups with HTTPS via Caddy.
-
-Create `docker-compose.yml`:
+### Option C: Docker Compose (with HTTPS)
 
 ```yaml
+# docker-compose.yml
 version: "3.8"
-
 services:
   quizhub:
     build: .
-    container_name: quizhub
     restart: unless-stopped
     volumes:
       - quizhub-data:/app/data
     environment:
       - QUIZHUB_PORT=8080
-      - QUIZHUB_ADMIN_PIN=change-this-pin
+      - QUIZHUB_ADMIN_PIN=change-this
     expose:
       - "8080"
 
   caddy:
     image: caddy:2-alpine
-    container_name: caddy
     restart: unless-stopped
     ports:
       - "80:80"
@@ -344,68 +308,98 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
-      - caddy-config:/config
 
 volumes:
   quizhub-data:
   caddy-data:
-  caddy-config:
 ```
 
-Create `Caddyfile`:
-
 ```
+# Caddyfile
 quiz.yourdomain.com {
     reverse_proxy quizhub:8080
 }
 ```
 
-Run:
-
 ```bash
 docker compose up -d
 ```
-
-Caddy automatically provisions HTTPS via Let's Encrypt.
 
 ---
 
 ## Configuration
 
-All configuration is via environment variables. No config files needed.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `QUIZHUB_PORT` | `8080` | Port the server listens on |
-| `QUIZHUB_DB` | `quizhub.db` | Path to the SQLite database file |
-| `QUIZHUB_ADMIN_PIN` | `1234` | PIN required to access the admin panel |
+| Variable             | Default      | Description                              |
+|----------------------|--------------|------------------------------------------|
+| `QUIZHUB_PORT`       | `8080`       | Port the server listens on               |
+| `QUIZHUB_DB`         | `quizhub.db` | Path to the SQLite database file         |
+| `QUIZHUB_ADMIN_PIN`  | `1234`       | PIN to access the admin panel            |
 
 **Important**: Change `QUIZHUB_ADMIN_PIN` before deploying to production.
 
 ---
 
-## Admin Panel
+## Game Flow
 
-### Accessing the admin panel
+### Admin Flow
 
-1. Navigate to `/admin.html` on your QuizHub server
-2. Enter the admin PIN (default: `1234`)
-3. The dashboard loads with real-time WebSocket connection
+```
+1. Go to /admin.html
+2. Enter admin PIN (default: 1234)
+3. Add questions:
+   - Type question text
+   - Fill in 4 options (A, B, C, D)
+   - Select the correct answer
+   - Click "Add Question"
+   - Repeat for all questions
+4. Set question timer (default: 15 seconds)
+5. Click "Create Quiz Room"
+   → Room code appears (e.g., A3X7K2)
+   → Shareable link appears (e.g., yoursite.com/?room=A3X7K2)
+   → Copy and share with players
+6. Watch players join in real time
+7. Click "Start Game" when everyone's in
+   → 10-second "Get Ready" countdown begins
+8. During each question:
+   - See the question + countdown timer
+   - See live answer stats (how many answered, correct vs wrong)
+   - See live leaderboard (updates as answers come in)
+9. When timer expires:
+   - Correct answer is revealed automatically
+   - Click "Next Question" to advance
+10. After last question: see final leaderboard
+11. Click "Create New Quiz" to start fresh
+```
 
-### Admin capabilities
+### Player Flow
 
-| Feature | Description |
-|---------|-------------|
-| **Start Game** | Shuffles all questions and begins the quiz |
-| **Next Question** | Advances to the next question (or ends game) |
-| **Reset Game** | Clears all players, scores, and returns to lobby |
-| **Set Timer** | Change per-question time limit (5-120 seconds) |
-| **Kick Player** | Remove a player from the game (disconnects their WebSocket) |
-| **Add Question** | Create a new question with text, 4 options, correct answer, category |
-| **Edit Question** | Modify any existing question |
-| **Delete Question** | Remove a question from the bank |
-| **Live Stats** | See real-time answer counts (total, correct, wrong) per question |
-| **Leaderboard** | Live-updating player rankings |
+```
+1. Go to / (or use shareable link with ?room=CODE)
+2. Enter room code + nickname → click "Join Room"
+3. See lobby: "You're In!" + list of other players
+4. Wait for host to start
+5. 10-second countdown: "Get Ready!"
+6. Question appears with options + timer
+7. Pick an answer → "Answer locked! Waiting for timer..."
+8. Timer expires → correct answer highlighted
+   - See if you were right/wrong + score earned
+   - Wait for host to advance
+9. Repeat for all questions
+10. Game Over: see your rank (#1, #2, etc.) + total score
+```
+
+### Scoring
+
+| Scenario | Score |
+|----------|-------|
+| Correct answer in 0.3s (on 15s timer) | ~980 pts |
+| Correct answer in 5s (on 15s timer) | ~667 pts |
+| Correct answer in 14s (on 15s timer) | ~67 pts |
+| Correct answer after timer (edge case) | 10 pts |
+| Wrong answer | 0 pts |
+| No answer (timeout) | 0 pts |
+
+Formula: `score = 1000 × (time_remaining_ms / total_time_ms)` (minimum 10 for correct).
 
 ---
 
@@ -415,52 +409,40 @@ All endpoints are prefixed with `/api`. JSON request/response bodies.
 
 ### Public Endpoints
 
-| Method | Path | Description | Request Body | Response |
-|--------|------|-------------|-------------|----------|
-| `GET` | `/api/health` | Server health check | — | `{"status":"ok","version":"1.0.0","player_count":N}` |
-| `POST` | `/api/join` | Join the quiz | `{"nickname":"..."}` | `{"player_id":"...","nickname":"...","score":0}` |
-| `GET` | `/api/players` | List all players | — | `[{"player_id":"...","nickname":"...","score":N}]` |
-| `GET` | `/api/game/state` | Current game state | — | `{"status":"lobby\|question\|finished",...}` |
-| `POST` | `/api/answer` | Submit an answer | `{"player_id":"...","question_id":N,"answer":N}` | `{"correct":bool,"score_earned":N,"total_score":N}` |
-| `GET` | `/api/leaderboard` | Sorted rankings | — | `[{"rank":N,"player_id":"...","nickname":"...","score":N}]` |
-| `GET` | `/api/categories` | Question categories | — | `["geography","science",...]` |
-| `GET` | `/api/questions` | All questions (with answers) | — | `[{"id":N,"text":"...","options":[...],"answer":N}]` |
-
-### Game Control Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/game/start` | Start a new game (shuffles questions) |
-| `POST` | `/api/game/next` | Advance to next question or finish game |
-| `POST` | `/api/game/reset` | Reset to lobby (clears players and scores) |
-| `POST` | `/api/game/start-with-categories` | Start with filtered categories: `{"categories":["math","science"]}` |
+| Method | Path | Description | Body / Params |
+|--------|------|-------------|---------------|
+| `GET` | `/api/health` | Health check | — |
+| `POST` | `/api/join` | Join a room | `{"nickname":"...","room_code":"A3X7K2"}` |
+| `GET` | `/api/players` | List players in room | — |
+| `GET` | `/api/game/state` | Current game state | — |
+| `POST` | `/api/answer` | Submit answer | `{"player_id":"...","question_id":N,"answer":N}` |
+| `GET` | `/api/leaderboard` | Sorted rankings | — |
+| `GET` | `/api/room/info?code=X` | Check if room exists | Query: `code` |
+| `GET` | `/api/questions` | List all questions | — |
 
 ### Admin Endpoints (require `X-Admin-Token` header)
 
-First authenticate to get a token:
+Authenticate first:
 
 ```bash
 curl -X POST /api/admin/auth \
   -H "Content-Type: application/json" \
   -d '{"pin":"1234"}'
-# Returns: {"token":"abc123..."}
+# → {"token":"abc123..."}
 ```
 
-Then use the token in subsequent requests:
-
-| Method | Path | Description | Request Body |
-|--------|------|-------------|-------------|
-| `POST` | `/api/admin/auth` | Authenticate with PIN | `{"pin":"..."}` |
-| `GET` | `/api/admin/config` | Get timer + categories | — |
-| `POST` | `/api/admin/timer` | Set timer (5-120 sec) | `{"time_limit":20}` |
-| `POST` | `/api/admin/kick` | Kick a player | `{"player_id":"..."}` |
+| Method | Path | Description | Body |
+|--------|------|-------------|------|
+| `POST` | `/api/admin/auth` | Get admin token | `{"pin":"1234"}` |
 | `POST` | `/api/questions/add` | Add a question | `{"text":"...","options":["A","B","C","D"],"answer":1,"category":"math"}` |
-| `POST` | `/api/questions/edit` | Edit a question | `{"id":1,"text":"...","options":[...],"answer":N,"category":"..."}` |
 | `POST` | `/api/questions/delete` | Delete a question | `{"id":1}` |
+| `POST` | `/api/admin/timer` | Set timer (5-120s) | `{"time_limit":20}` |
+| `POST` | `/api/room/create` | Create quiz room | — → `{"room_code":"A3X7K2","link":"..."}` |
+| `POST` | `/api/game/start` | Start game (10s countdown) | — |
+| `POST` | `/api/game/next` | Next question (reveal state only) | — |
+| `POST` | `/api/game/reset` | Reset everything | — |
 
 ### WebSocket
-
-Connect to `/api/ws` with query parameters:
 
 ```
 ws://localhost:8080/api/ws?role=player&player_id=abc-123
@@ -471,67 +453,49 @@ ws://localhost:8080/api/ws?role=admin
 
 ## WebSocket Events
 
-Events are JSON messages: `{"event":"event_name","data":{...}}`
+Events are JSON: `{"event":"name","data":{...}}`
 
-| Event | Direction | Description | Sent To |
-|-------|-----------|-------------|---------|
-| `player_joined` | Server -> Client | New player joined | All |
-| `players_update` | Server -> Client | Full player list refresh | All |
-| `game_started` | Server -> Client | Game started with first question | All |
-| `new_question` | Server -> Client | New question loaded | All |
-| `player_answered` | Server -> Client | Answer stats updated | Admin only |
-| `leaderboard_update` | Server -> Client | Leaderboard changed | All |
-| `game_finished` | Server -> Client | All questions answered | All |
-| `game_reset` | Server -> Client | Game returned to lobby | All |
-| `player_kicked` | Server -> Client | Player was removed | Kicked player only |
+| Event | Description | Sent To |
+|-------|-------------|---------|
+| `game_countdown` | 10s countdown started | All |
+| `new_question` | New question loaded | All |
+| `time_up` | Timer expired, correct answer revealed | All |
+| `your_result` | Personal correct/wrong + score | Individual player |
+| `game_finished` | All questions done | All |
+| `game_reset` | Game reset to fresh state | All |
+| `player_joined` | New player joined room | All |
+| `players_update` | Full player list refresh | All |
+| `player_answered` | Answer stats update | Admin only |
+| `player_kicked` | Player removed | Kicked player |
+| `leaderboard_update` | Rankings changed | All |
 
 ---
 
 ## Running Tests
 
-### Go unit tests (38 tests)
-
 ```bash
+# Go unit tests
 make test
-# or: go test ./... -v -count=1
-```
 
-### Test coverage report
-
-```bash
+# Coverage report
 make cover
-# Opens HTML coverage report in browser
-```
 
-### Quick smoke test (curl)
-
-```bash
-# Health
-curl -s http://localhost:8080/api/health
-
-# Join
-curl -s -X POST http://localhost:8080/api/join \
-  -H "Content-Type: application/json" \
-  -d '{"nickname":"Test"}'
-
-# Admin auth
-curl -s -X POST http://localhost:8080/api/admin/auth \
-  -H "Content-Type: application/json" \
-  -d '{"pin":"1234"}'
+# Quick smoke test
+curl http://localhost:8080/api/health
 ```
 
 ---
 
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| `bind: address already in use` | Port 8080 is taken | Set `QUIZHUB_PORT=3000` or kill the other process |
-| `Failed to open database` | Directory doesn't exist | Create the data directory: `mkdir -p /app/data` |
-| WebSocket not connecting | Reverse proxy not forwarding `Upgrade` headers | Add `proxy_set_header Upgrade $http_upgrade` to Nginx config |
-| Admin returns 401 | Wrong PIN or missing token | Verify PIN matches `QUIZHUB_ADMIN_PIN` env; include `X-Admin-Token` header |
-| Questions not loading | Database was deleted | Restart the server — seed data is recreated automatically |
-| Binary won't run on server | Wrong architecture | Rebuild with correct `GOOS`/`GOARCH` (see [Option B](#option-b-bare-binary-on-a-vps)) |
+| Problem | Fix |
+|---------|-----|
+| `bind: address already in use` | Change port: `QUIZHUB_PORT=3000 ./quizhub` |
+| WebSocket not connecting | Ensure Nginx forwards `Upgrade` headers (see deployment section) |
+| "Invalid room code" | Room was reset — admin needs to create a new room |
+| "Game already in progress" | Players can't join mid-game — wait for reset |
+| Admin returns 401 | Include `X-Admin-Token` header from `/api/admin/auth` |
+| Binary won't run | Rebuild with correct `GOOS`/`GOARCH` for your server |
 
 ---
 
