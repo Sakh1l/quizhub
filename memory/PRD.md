@@ -37,6 +37,13 @@
   - Player view: no control buttons, reactive to WS events, personal rank at end
   - Admin view: Start Game, Next Question, live leaderboard + answer stats during game
   - Millisecond-precision scoring (0-1000 scale based on speed)
+- [Apr 2026] Phase 7: Room system + new landing page
+  - Player landing page (/): room code + name entry to join
+  - Admin flow: PIN → add custom questions → create room → share code/link → lobby → game
+  - Room codes: 6-char alphanumeric, shareable links (?room=CODE)
+  - No pre-seeded questions — admin creates fresh per quiz
+  - Reset clears everything (questions, players, room) for next quiz
+  - Fixed FastAPI proxy not forwarding query parameters
 
 ## Admin Credentials
 - Default PIN: `1234` (configurable via `QUIZHUB_ADMIN_PIN` env)

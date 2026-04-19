@@ -7,5 +7,7 @@
 - **Usage**: Include `X-Admin-Token: <token>` header in admin-protected requests
 
 ## Player
-- No authentication required
-- Join via POST `/api/join` with `{"nickname":"..."}` 
+- **URL**: `/` (landing page)
+- Join via POST `/api/join` with `{"nickname":"...","room_code":"..."}` 
+- Room code is provided by admin after creating a quiz room
+- Pre-fill room code via URL: `/?room=CODE`
