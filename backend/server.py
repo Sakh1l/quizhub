@@ -3,22 +3,24 @@ import signal
 import sys
 import os
 import asyncio
+from typing import AsyncGenerator, Optional
+
 import httpx
 import websockets
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from contextlib import asynccontextmanager
 
-GO_BINARY = os.path.join(os.path.dirname(__file__), "quizhub")
-GO_PORT = os.getenv("GO_PORT", "8002")
-GO_URL = f"http://127.0.0.1:{GO_PORT}"
-GO_WS_URL = f"ws://127.0.0.1:{GO_PORT}"
+GO_BINARY: str = os.path.join(os.path.dirname(__file__), "quizhub")
+GO_PORT: str = os.getenv("GO_PORT", "8002")
+GO_URL: str = f"http://127.0.0.1:{GO_PORT}"
+GO_WS_URL: str = f"ws://127.0.0.1:{GO_PORT}"
 
-go_process = None
+go_process: Optional[subprocess.Popen] = None
 
 
 @asynccontextmanager
-async def lifespan(application):
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     global go_process
     env = os.environ.copy()
     env["QUIZHUB_PORT"] = GO_PORT
@@ -40,27 +42,26 @@ client = httpx.AsyncClient(base_url=GO_URL, timeout=30.0)
 
 
 @app.websocket("/api/ws")
-async def websocket_proxy(ws: WebSocket):
+async def websocket_proxy(ws: WebSocket) -> None:
     await ws.accept()
 
-    # Build query string from original request
-    params = dict(ws.query_params)
-    qs = "&".join(f"{k}={v}" for k, v in params.items())
-    go_ws_url = f"{GO_WS_URL}/api/ws?{qs}" if qs else f"{GO_WS_URL}/api/ws"
+    params: dict[str, str] = dict(ws.query_params)
+    qs: str = "&".join(f"{k}={v}" for k, v in params.items())
+    go_ws_url: str = f"{GO_WS_URL}/api/ws?{qs}" if qs else f"{GO_WS_URL}/api/ws"
 
     try:
         async with websockets.connect(go_ws_url) as go_ws:
-            async def client_to_go():
+            async def client_to_go() -> None:
                 try:
                     while True:
-                        data = await ws.receive_text()
+                        data: str = await ws.receive_text()
                         await go_ws.send(data)
                 except WebSocketDisconnect:
                     pass
                 except Exception:
                     pass
 
-            async def go_to_client():
+            async def go_to_client() -> None:
                 try:
                     async for msg in go_ws:
                         await ws.send_text(msg)
@@ -83,13 +84,13 @@ async def websocket_proxy(ws: WebSocket):
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-async def proxy_api(request: Request, path: str):
-    url = f"/api/{path}"
-    body = await request.body()
-    headers = dict(request.headers)
+async def proxy_api(request: Request, path: str) -> Response:
+    url: str = f"/api/{path}"
+    body: bytes = await request.body()
+    headers: dict[str, str] = dict(request.headers)
     headers.pop("host", None)
 
-    resp = await client.request(
+    resp: httpx.Response = await client.request(
         method=request.method,
         url=url,
         content=body,
@@ -104,9 +105,9 @@ async def proxy_api(request: Request, path: str):
 
 
 @app.get("/{path:path}")
-async def proxy_static(request: Request, path: str = ""):
-    url = f"/{path}" if path else "/"
-    resp = await client.get(url)
+async def proxy_static(request: Request, path: str = "") -> Response:
+    url: str = f"/{path}" if path else "/"
+    resp: httpx.Response = await client.get(url)
     return Response(
         content=resp.content,
         status_code=resp.status_code,
