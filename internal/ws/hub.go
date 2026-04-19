@@ -20,10 +20,11 @@ var upgrader = websocket.Upgrader{
 const (
 	EventPlayerJoined    = "player_joined"
 	EventPlayerKicked    = "player_kicked"
-	EventGameStarted     = "game_started"
+	EventGameCountdown   = "game_countdown"
 	EventNewQuestion     = "new_question"
 	EventPlayerAnswered  = "player_answered"
-	EventTimerTick       = "timer_tick"
+	EventTimeUp          = "time_up"
+	EventYourResult      = "your_result"
 	EventGameFinished    = "game_finished"
 	EventGameReset       = "game_reset"
 	EventLeaderboard     = "leaderboard_update"

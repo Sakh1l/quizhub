@@ -38,17 +38,6 @@ func main() {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	// Additional admin route for category-based game start
-	mux.HandleFunc("/api/game/start-with-categories", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			w.Write([]byte(`{"error":"method not allowed"}`))
-			return
-		}
-		h.StartGameWithCategories(w, r)
-	})
-
 	// Serve embedded static files
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {

@@ -49,11 +49,12 @@ type AnswerResponse struct {
 
 // GameState represents the current state of the quiz game.
 type GameState struct {
-	Status          string       `json:"status"` // "lobby", "question", "reveal", "finished"
+	Status          string       `json:"status"` // "lobby", "countdown", "question", "reveal", "finished"
 	CurrentQuestion *QuestionOut `json:"current_question,omitempty"`
 	QuestionIndex   int          `json:"question_index"`
 	TotalQuestions  int          `json:"total_questions"`
 	TimeLeft        int          `json:"time_left"`
+	CorrectAnswer   int          `json:"correct_answer,omitempty"`
 }
 
 // LeaderboardEntry is a player's position on the leaderboard.

@@ -129,6 +129,21 @@ body::before {
 
 .admin-grid .full-width { grid-column: 1 / -1; }
 
+/* Admin layout: game area + sidebar */
+.admin-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 1rem;
+  margin-bottom: 0;
+}
+
+.game-area .card { margin-bottom: 0; }
+.sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+@media (max-width: 900px) {
+  .admin-layout { grid-template-columns: 1fr; }
+}
+
 /* PIN Screen */
 .pin-screen {
   max-width: 400px;

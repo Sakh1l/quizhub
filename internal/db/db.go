@@ -329,6 +329,17 @@ func (d *DB) HasAnswered(playerID string, questionID int) bool {
 	return count > 0
 }
 
+// GetPlayerAnswer returns a player's answer details for a specific question.
+func (d *DB) GetPlayerAnswer(playerID string, questionID int) (selected int, correct bool, err error) {
+	var correctInt int
+	err = d.conn.QueryRow(
+		"SELECT selected, correct FROM answers WHERE player_id = ? AND question_id = ?",
+		playerID, questionID,
+	).Scan(&selected, &correctInt)
+	correct = correctInt == 1
+	return
+}
+
 // --- Game state operations ---
 
 // GetGameState returns the current game state.
