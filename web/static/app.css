@@ -145,6 +145,31 @@ body::before {
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+.join-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.join-fields input {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.join-fields input::placeholder { color: var(--text-muted); }
+
+.join-fields input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 .error-msg {
   color: var(--danger);
   font-size: 0.82rem;

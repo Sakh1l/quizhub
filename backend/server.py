@@ -86,6 +86,8 @@ async def websocket_proxy(ws: WebSocket) -> None:
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_api(request: Request, path: str) -> Response:
     url: str = f"/api/{path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
     body: bytes = await request.body()
     headers: dict[str, str] = dict(request.headers)
     headers.pop("host", None)

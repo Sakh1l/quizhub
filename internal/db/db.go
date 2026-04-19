@@ -84,6 +84,7 @@ func (d *DB) migrate() error {
 		`CREATE TABLE IF NOT EXISTS game_state (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			status TEXT NOT NULL DEFAULT 'lobby',
+			room_code TEXT,
 			current_question_id INTEGER,
 			question_index INTEGER NOT NULL DEFAULT 0,
 			question_started_at TEXT,
@@ -97,63 +98,17 @@ func (d *DB) migrate() error {
 		}
 	}
 
+	// Add room_code column if missing (migration for existing DBs)
+	d.conn.Exec("ALTER TABLE game_state ADD COLUMN room_code TEXT")
+
 	// Ensure game_state row exists
 	_, err := d.conn.Exec(`INSERT OR IGNORE INTO game_state (id, status) VALUES (1, 'lobby')`)
 	return err
 }
 
 func (d *DB) seed() error {
-	var count int
-	d.conn.QueryRow("SELECT COUNT(*) FROM questions").Scan(&count)
-	if count > 0 {
-		return nil // already seeded
-	}
-
-	type q struct {
-		text     string
-		options  []string
-		answer   int
-		category string
-	}
-
-	questions := []q{
-		{"What is the capital of France?", []string{"London", "Paris", "Berlin", "Madrid"}, 1, "geography"},
-		{"Which planet is known as the Red Planet?", []string{"Venus", "Jupiter", "Mars", "Saturn"}, 2, "science"},
-		{"What is 12 x 12?", []string{"120", "132", "144", "156"}, 2, "math"},
-		{"Who wrote 'Romeo and Juliet'?", []string{"Dickens", "Shakespeare", "Austen", "Twain"}, 1, "literature"},
-		{"What is the largest ocean on Earth?", []string{"Atlantic", "Indian", "Arctic", "Pacific"}, 3, "geography"},
-		{"In what year did the Titanic sink?", []string{"1905", "1912", "1920", "1898"}, 1, "history"},
-		{"What is the chemical symbol for gold?", []string{"Go", "Gd", "Au", "Ag"}, 2, "science"},
-		{"How many sides does a hexagon have?", []string{"5", "6", "7", "8"}, 1, "math"},
-		{"Which language has the most native speakers?", []string{"English", "Spanish", "Hindi", "Mandarin"}, 3, "geography"},
-		{"What is the square root of 256?", []string{"14", "15", "16", "18"}, 2, "math"},
-		{"Who painted the Mona Lisa?", []string{"Michelangelo", "Da Vinci", "Raphael", "Rembrandt"}, 1, "history"},
-		{"What is the boiling point of water in Celsius?", []string{"90", "95", "100", "105"}, 2, "science"},
-		{"Which continent is the Sahara Desert on?", []string{"Asia", "Africa", "Australia", "South America"}, 1, "geography"},
-		{"What does HTTP stand for?", []string{"HyperText Transfer Protocol", "High Tech Transfer Protocol", "HyperText Transmission Process", "High Transfer Text Protocol"}, 0, "technology"},
-		{"How many bones are in the adult human body?", []string{"186", "196", "206", "216"}, 2, "science"},
-	}
-
-	tx, err := d.conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare("INSERT INTO questions (text, options, answer, category) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, question := range questions {
-		opts, _ := json.Marshal(question.options)
-		if _, err := stmt.Exec(question.text, string(opts), question.answer, question.category); err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
+	// No seed data — admin creates questions per quiz
+	return nil
 }
 
 // --- Player operations ---
@@ -343,10 +298,10 @@ func (d *DB) GetPlayerAnswer(playerID string, questionID int) (selected int, cor
 // --- Game state operations ---
 
 // GetGameState returns the current game state.
-func (d *DB) GetGameState() (status string, questionID int, questionIndex int, startedAt string, timeLimit int, err error) {
+func (d *DB) GetGameState() (status string, questionID int, questionIndex int, startedAt string, timeLimit int, roomCode string, err error) {
 	err = d.conn.QueryRow(
-		"SELECT status, COALESCE(current_question_id, 0), question_index, COALESCE(question_started_at, ''), time_limit FROM game_state WHERE id = 1",
-	).Scan(&status, &questionID, &questionIndex, &startedAt, &timeLimit)
+		"SELECT status, COALESCE(current_question_id, 0), question_index, COALESCE(question_started_at, ''), time_limit, COALESCE(room_code, '') FROM game_state WHERE id = 1",
+	).Scan(&status, &questionID, &questionIndex, &startedAt, &timeLimit, &roomCode)
 	return
 }
 
@@ -367,12 +322,26 @@ func (d *DB) SetGameState(status string, questionID, questionIndex int, startedA
 	return err
 }
 
-// ResetGame clears all players, answers, and resets game state to lobby.
+// SetRoomCode sets the room code.
+func (d *DB) SetRoomCode(code string) error {
+	_, err := d.conn.Exec("UPDATE game_state SET room_code = ? WHERE id = 1", code)
+	return err
+}
+
+// GetRoomCode returns the current room code.
+func (d *DB) GetRoomCode() string {
+	var code string
+	d.conn.QueryRow("SELECT COALESCE(room_code, '') FROM game_state WHERE id = 1").Scan(&code)
+	return code
+}
+
+// ResetGame clears all players, answers, questions, and resets game state.
 func (d *DB) ResetGame() error {
 	stmts := []string{
 		"DELETE FROM answers",
 		"DELETE FROM players",
-		"UPDATE game_state SET status = 'lobby', current_question_id = NULL, question_index = 0, question_started_at = NULL WHERE id = 1",
+		"DELETE FROM questions",
+		"UPDATE game_state SET status = 'lobby', room_code = NULL, current_question_id = NULL, question_index = 0, question_started_at = NULL WHERE id = 1",
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
