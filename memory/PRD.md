@@ -28,12 +28,15 @@
   - Dockerfile: multi-stage (golang:1.24-alpine -> alpine:3.21), single binary, /app/data volume
   - 38 Go unit tests (14 DB + 24 handler) all passing
   - E2E tests: 100% pass (18 backend + 14 frontend + WS)
-- [Jan 2026] Phase 5: Bug fixes
-  - Fixed WebSocket Hijacker error (middleware statusWriter didn't implement http.Hijacker)
-  - Fixed CORS missing X-Admin-Token in allowed headers
-  - Fixed "Play Again" not updating playerId after re-join (stale ID caused 404s)
-  - Fixed handleNextQuestion prematurely ending game on any error
-  - Fixed game_reset WS handler not resetting playerId (players stuck with deleted IDs)
+- [Jan 2026] Phase 5: Bug fixes (WebSocket Hijacker, Play Again, handleNextQuestion)
+- [Apr 2026] Phase 6: Major game flow rewrite
+  - Admin-controlled game: lobby → 10s countdown → question → reveal → admin next → ... → finished
+  - Server-side goroutine timers for countdown and question timer
+  - Answer endpoint returns {recorded: true} only (no spoilers)
+  - Correct answer revealed via WS "time_up" event to all players simultaneously
+  - Player view: no control buttons, reactive to WS events, personal rank at end
+  - Admin view: Start Game, Next Question, live leaderboard + answer stats during game
+  - Millisecond-precision scoring (0-1000 scale based on speed)
 
 ## Admin Credentials
 - Default PIN: `1234` (configurable via `QUIZHUB_ADMIN_PIN` env)
