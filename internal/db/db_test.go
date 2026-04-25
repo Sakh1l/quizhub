@@ -179,8 +179,7 @@ func TestHasAnswered(t *testing.T) {
 
 func TestGameState(t *testing.T) {
 	d := newTestDB(t)
-
-	status, qID, qIdx, startedAt, timeLimit, err := d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, _, err := d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState: %v", err)
 	}
@@ -190,7 +189,7 @@ func TestGameState(t *testing.T) {
 
 	d.SetGameState("question", 5, 2, "2026-01-01T00:00:00Z", 20)
 
-	status, qID, qIdx, startedAt, timeLimit, err = d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, _, err = d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState after set: %v", err)
 	}
@@ -213,7 +212,7 @@ func TestResetGame(t *testing.T) {
 		t.Errorf("expected 0 players after reset, got %d", c)
 	}
 
-	status, _, _, _, _, _ := d.GetGameState()
+	status, _, _, _, _, _, _ := d.GetGameState()
 	if status != "lobby" {
 		t.Errorf("expected lobby after reset, got %s", status)
 	}
