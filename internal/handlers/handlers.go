@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -18,6 +19,14 @@ import (
 
 const version = "1.0.0"
 const countdownDuration = 10
+const authRateWindow = 10 * time.Minute
+const authMaxFailures = 5
+
+type authAttempt struct {
+	failures     int
+	windowStart  time.Time
+	lockoutUntil time.Time
+}
 
 type Handler struct {
 	DB          *db.DB
@@ -36,13 +45,132 @@ func New(database *db.DB, hub *ws.Hub) *Handler {
 	if pin == "" {
 		pin = "1234"
 	}
-	return &Handler{
-		DB:          database,
-		Hub:         hub,
-		TimeLimit:   15,
-		AdminPIN:    pin,
-		AdminTokens: make(map[string]bool),
+	tokenTTL := 4 * time.Hour
+	if raw := strings.TrimSpace(os.Getenv("QUIZHUB_ADMIN_TOKEN_TTL_MIN")); raw != "" {
+		if mins, err := time.ParseDuration(raw + "m"); err == nil && mins > 0 {
+			tokenTTL = mins
+		}
 	}
+	trustProxy := strings.EqualFold(strings.TrimSpace(os.Getenv("QUIZHUB_TRUST_PROXY")), "true")
+	return &Handler{
+		DB:           database,
+		Hub:          hub,
+		timeLimit:    15,
+		AdminPIN:     pin,
+		tokenTTL:     tokenTTL,
+		adminTokens:  make(map[string]time.Time),
+		authAttempts: make(map[string]authAttempt),
+		trustProxy:   trustProxy,
+	}
+}
+
+func (h *Handler) getQuestionIDs() []int {
+	h.stateMu.RLock()
+	defer h.stateMu.RUnlock()
+	return append([]int(nil), h.questionIDs...)
+}
+
+func (h *Handler) setQuestionIDs(ids []int) {
+	h.stateMu.Lock()
+	h.questionIDs = append([]int(nil), ids...)
+	h.stateMu.Unlock()
+}
+
+func (h *Handler) clearQuestionIDs() {
+	h.stateMu.Lock()
+	h.questionIDs = nil
+	h.stateMu.Unlock()
+}
+
+func (h *Handler) getTimeLimit() int {
+	h.stateMu.RLock()
+	defer h.stateMu.RUnlock()
+	return h.timeLimit
+}
+
+func (h *Handler) setTimeLimit(v int) {
+	h.stateMu.Lock()
+	h.timeLimit = v
+	h.stateMu.Unlock()
+}
+
+func (h *Handler) setAdminToken(token string) {
+	h.stateMu.Lock()
+	clear(h.adminTokens) // single active admin session
+	h.adminTokens[token] = time.Now().Add(h.tokenTTL)
+	h.stateMu.Unlock()
+}
+
+func (h *Handler) getClientIP(r *http.Request) string {
+	if h.trustProxy {
+		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				if ip := strings.TrimSpace(parts[0]); ip != "" {
+					return ip
+				}
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func (h *Handler) isAuthLocked(ip string, now time.Time) bool {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	attempt, ok := h.authAttempts[ip]
+	if !ok {
+		return false
+	}
+	if !attempt.lockoutUntil.IsZero() && now.Before(attempt.lockoutUntil) {
+		return true
+	}
+	if !attempt.lockoutUntil.IsZero() && !now.Before(attempt.lockoutUntil) {
+		delete(h.authAttempts, ip)
+	}
+	return false
+}
+
+func (h *Handler) recordAuthFailure(ip string, now time.Time) {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	attempt := h.authAttempts[ip]
+	if attempt.windowStart.IsZero() || now.Sub(attempt.windowStart) > authRateWindow {
+		attempt.windowStart = now
+		attempt.failures = 0
+		attempt.lockoutUntil = time.Time{}
+	}
+	attempt.failures++
+	if attempt.failures >= authMaxFailures {
+		attempt.lockoutUntil = now.Add(authRateWindow)
+	}
+	h.authAttempts[ip] = attempt
+}
+
+func (h *Handler) clearAuthFailures(ip string) {
+	h.stateMu.Lock()
+	delete(h.authAttempts, ip)
+	h.stateMu.Unlock()
+}
+
+func (h *Handler) isAdminTokenValid(token string) bool {
+	if token == "" {
+		return false
+	}
+	now := time.Now()
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	for t, expiresAt := range h.adminTokens {
+		if expiresAt.Before(now) {
+			delete(h.adminTokens, t)
+		}
+	}
+	expiresAt, ok := h.adminTokens[token]
+	return ok && expiresAt.After(now)
 }
 
 func (h *Handler) stopTimer() {
@@ -84,7 +212,7 @@ func methodOnly(method string, next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
-		if token == "" || !h.AdminTokens[token] {
+		if !h.isAdminTokenValid(token) {
 			writeError(w, http.StatusUnauthorized, "admin access required")
 			return
 		}
@@ -134,7 +262,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/questions", h.QuestionsRouter)
 
 	// WebSocket
-	mux.HandleFunc("/api/ws", h.Hub.HandleWS)
+	mux.HandleFunc("/api/ws", h.HandleWS)
 }
 
 // --- handlers ---
@@ -145,6 +273,20 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		Version:     version,
 		PlayerCount: h.DB.PlayerCount(),
 	})
+}
+
+func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
+	if strings.EqualFold(r.URL.Query().Get("role"), "admin") {
+		token := strings.TrimSpace(r.URL.Query().Get("admin_token"))
+		if token == "" {
+			token = r.Header.Get("X-Admin-Token")
+		}
+		if !h.isAdminTokenValid(token) {
+			writeError(w, http.StatusUnauthorized, "admin access required")
+			return
+		}
+	}
+	h.Hub.HandleWS(w, r)
 }
 
 // Join requires room_code + nickname.
@@ -326,7 +468,7 @@ func (h *Handler) revealAnswer(qID, idx int) {
 		return
 	}
 
-	h.DB.SetGameState("reveal", qID, idx, "", h.TimeLimit)
+	h.DB.SetGameState("reveal", qID, idx, "", h.getTimeLimit())
 
 	h.Hub.Broadcast(ws.EventTimeUp, map[string]interface{}{
 		"question_id":    qID,
@@ -364,6 +506,7 @@ func (h *Handler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ids := h.getQuestionIDs()
 	nextIdx := qIdx + 1
 	h.loadQuestion(nextIdx)
 
@@ -534,15 +677,23 @@ func (h *Handler) ResetGame(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AdminAuth(w http.ResponseWriter, r *http.Request) {
 	var req models.AdminAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PIN == "" {
-		writeError(w, http.StatusBadRequest, "pin is required")
+		writeError(w, http.StatusBadRequest, "invalid credentials")
+		return
+	}
+	ip := h.getClientIP(r)
+	now := time.Now()
+	if h.isAuthLocked(ip, now) {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if req.PIN != h.AdminPIN {
-		writeError(w, http.StatusUnauthorized, "invalid pin")
+		h.recordAuthFailure(ip, now)
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	h.clearAuthFailures(ip)
 	token := generateToken()
-	h.AdminTokens[token] = true
+	h.setAdminToken(token)
 	writeJSON(w, http.StatusOK, models.AdminAuthResponse{Token: token})
 }
 
@@ -556,8 +707,8 @@ func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "time_limit must be between 5 and 120 seconds")
 		return
 	}
-	h.TimeLimit = req.TimeLimit
-	writeJSON(w, http.StatusOK, map[string]int{"time_limit": h.TimeLimit})
+	h.setTimeLimit(req.TimeLimit)
+	writeJSON(w, http.StatusOK, map[string]int{"time_limit": h.getTimeLimit()})
 }
 
 func (h *Handler) QuestionsRouter(w http.ResponseWriter, r *http.Request) {
