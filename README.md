@@ -334,6 +334,9 @@ docker compose up -d
 | `QUIZHUB_PORT`       | `8080`       | Port the server listens on               |
 | `QUIZHUB_DB`         | `quizhub.db` | Path to the SQLite database file         |
 | `QUIZHUB_ADMIN_PIN`  | `1234`       | PIN to access the admin panel            |
+| `QUIZHUB_ADMIN_TOKEN_TTL_MIN` | `240` | Admin token lifetime in minutes |
+| `QUIZHUB_ALLOWED_ORIGINS` | *(empty)* | Comma-separated WebSocket `Origin` allowlist (if empty, same-host origin is allowed) |
+| `QUIZHUB_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for client IP detection (enable only behind trusted proxy) |
 
 **Important**: Change `QUIZHUB_ADMIN_PIN` before deploying to production.
 

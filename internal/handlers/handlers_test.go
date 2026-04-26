@@ -30,7 +30,7 @@ func setupTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 func doRequest(mux *http.ServeMux, method, path string, body interface{}) *httptest.ResponseRecorder {
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
@@ -42,7 +42,7 @@ func doRequest(mux *http.ServeMux, method, path string, body interface{}) *httpt
 func doAdminRequest(mux *http.ServeMux, method, path string, body interface{}, token string) *httptest.ResponseRecorder {
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
@@ -123,6 +123,7 @@ func TestHealthHandler(t *testing.T) {
 	if resp.Status != "ok" || resp.Version != "1.0.0" {
 		t.Errorf("unexpected health response: %+v", resp)
 	}
+	return resp.Token
 }
 
 func TestJoinHandler_Valid(t *testing.T) {
@@ -143,10 +144,6 @@ func TestJoinHandler_Valid(t *testing.T) {
 	if p.Nickname != "TestPlayer" || p.ID == "" || p.Score != 0 {
 		t.Errorf("unexpected player: %+v", p)
 	}
-}
-
-func TestJoinHandler_EmptyNickname(t *testing.T) {
-	_, mux := setupTestHandler(t)
 
 	w := doRequest(mux, http.MethodPost, "/api/join", map[string]string{"nickname": ""})
 	if w.Code != http.StatusBadRequest {
@@ -182,9 +179,12 @@ func TestJoinHandler_LongNickname(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for long nickname, got %d", w.Code)
 	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	return resp["room_code"]
 }
 
-func TestPlayersHandler(t *testing.T) {
+func TestHealthHandler(t *testing.T) {
 	_, mux := setupTestHandler(t)
 	token := getAdminToken(t, mux)
 	addQuestion(t, mux, token)
@@ -289,7 +289,7 @@ func TestNextQuestionHandler_NotActive(t *testing.T) {
 	// NextQuestion requires status=="reveal" — calling without starting should fail
 	w := doAdminRequest(mux, http.MethodPost, "/api/game/next", nil, token)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -332,6 +332,7 @@ func TestGameStateHandler(t *testing.T) {
 func TestAddQuestionHandler(t *testing.T) {
 	_, mux := setupTestHandler(t)
 	token := getAdminToken(t, mux)
+	roomCode := createRoom(t, mux, token)
 
 	w := doAdminRequest(mux, http.MethodPost, "/api/questions/add", map[string]interface{}{
 		"text":     "Custom question?",
@@ -344,7 +345,7 @@ func TestAddQuestionHandler(t *testing.T) {
 	}
 }
 
-func TestAddQuestionHandler_Invalid(t *testing.T) {
+func TestStartGameRequiresAdmin(t *testing.T) {
 	_, mux := setupTestHandler(t)
 	token := getAdminToken(t, mux)
 
@@ -488,7 +489,7 @@ func TestCreateRoomHandler(t *testing.T) {
 	}
 }
 
-func TestFullGameFlow(t *testing.T) {
+func TestAdminWSRequiresToken(t *testing.T) {
 	_, mux := setupTestHandler(t)
 	token := getAdminToken(t, mux)
 
