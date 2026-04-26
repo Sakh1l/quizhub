@@ -147,14 +147,15 @@ func TestGetQuestionIDs(t *testing.T) {
 func TestRecordAnswer(t *testing.T) {
 	d := newTestDB(t)
 	p, _ := d.CreatePlayer("Alice")
-	recorded, err := d.RecordAnswer(p.ID, 1, 1, true, 500)
+	qID := addTestQuestion(t, d) // need a real question for FK constraint
+	recorded, err := d.RecordAnswer(p.ID, qID, 1, true, 500)
 	if err != nil {
 		t.Fatalf("RecordAnswer: %v", err)
 	}
 	if !recorded {
 		t.Error("expected recorded=true for first answer")
 	}
-	recorded, err = d.RecordAnswer(p.ID, 1, 2, false, 0)
+	recorded, err = d.RecordAnswer(p.ID, qID, 2, false, 0)
 	if err != nil {
 		t.Fatalf("RecordAnswer duplicate: %v", err)
 	}
@@ -166,11 +167,12 @@ func TestRecordAnswer(t *testing.T) {
 func TestHasAnswered(t *testing.T) {
 	d := newTestDB(t)
 	p, _ := d.CreatePlayer("Alice")
-	if d.HasAnswered(p.ID, 1) {
+	qID := addTestQuestion(t, d) // need a real question for FK constraint
+	if d.HasAnswered(p.ID, qID) {
 		t.Error("should not have answered yet")
 	}
-	d.RecordAnswer(p.ID, 1, 0, false, 0)
-	if !d.HasAnswered(p.ID, 1) {
+	d.RecordAnswer(p.ID, qID, 0, false, 0)
+	if !d.HasAnswered(p.ID, qID) {
 		t.Error("should have answered now")
 	}
 }
