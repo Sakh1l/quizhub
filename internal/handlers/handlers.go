@@ -26,6 +26,7 @@ type Handler struct {
 	TimeLimit   int
 	AdminPIN    string
 	AdminTokens map[string]bool
+	mu          sync.RWMutex // protects QuestionIDs
 	timerMu     sync.Mutex
 	activeTimer *time.Timer
 }
@@ -259,7 +260,9 @@ func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.mu.Lock()
 	h.QuestionIDs = ids
+	h.mu.Unlock()
 	if err := h.DB.SetGameState("countdown", 0, 0, "", h.TimeLimit); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start countdown")
 		return
@@ -282,32 +285,37 @@ func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) loadQuestion(idx int) {
-	if idx >= len(h.QuestionIDs) {
-		h.DB.SetGameState("finished", 0, idx, "", h.TimeLimit)
+	h.mu.RLock()
+	qIDs := h.QuestionIDs
+	timeLimit := h.TimeLimit
+	h.mu.RUnlock()
+
+	if idx >= len(qIDs) {
+		h.DB.SetGameState("finished", 0, idx, "", timeLimit)
 		h.Hub.Broadcast(ws.EventGameFinished, map[string]interface{}{
 			"status":          "finished",
-			"total_questions": len(h.QuestionIDs),
+			"total_questions": len(qIDs),
 		})
 		h.broadcastLeaderboard()
 		return
 	}
 
-	qID := h.QuestionIDs[idx]
+	qID := qIDs[idx]
 	now := time.Now().UTC().Format(time.RFC3339)
-	h.DB.SetGameState("question", qID, idx, now, h.TimeLimit)
+	h.DB.SetGameState("question", qID, idx, now, timeLimit)
 
 	q, _ := h.DB.GetQuestion(qID)
 	state := models.GameState{
 		Status:          "question",
 		CurrentQuestion: &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category},
 		QuestionIndex:   idx,
-		TotalQuestions:  len(h.QuestionIDs),
-		TimeLeft:        h.TimeLimit,
+		TotalQuestions:  len(qIDs),
+		TimeLeft:        timeLimit,
 	}
 
 	h.Hub.Broadcast(ws.EventNewQuestion, state)
 
-	h.startTimer(time.Duration(h.TimeLimit)*time.Second, func() {
+	h.startTimer(time.Duration(timeLimit)*time.Second, func() {
 		h.revealAnswer(qID, idx)
 	})
 }
@@ -359,20 +367,25 @@ func (h *Handler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 	nextIdx := qIdx + 1
 	h.loadQuestion(nextIdx)
 
-	if nextIdx >= len(h.QuestionIDs) {
+	h.mu.RLock()
+	qIDs := h.QuestionIDs
+	timeLimit := h.TimeLimit
+	h.mu.RUnlock()
+
+	if nextIdx >= len(qIDs) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":          "finished",
 			"question_index":  nextIdx,
-			"total_questions": len(h.QuestionIDs),
+			"total_questions": len(qIDs),
 		})
 	} else {
-		q, _ := h.DB.GetQuestion(h.QuestionIDs[nextIdx])
+		q, _ := h.DB.GetQuestion(qIDs[nextIdx])
 		writeJSON(w, http.StatusOK, models.GameState{
 			Status:          "question",
 			CurrentQuestion: &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category},
 			QuestionIndex:   nextIdx,
-			TotalQuestions:  len(h.QuestionIDs),
-			TimeLeft:        h.TimeLimit,
+			TotalQuestions:  len(qIDs),
+			TimeLeft:        timeLimit,
 		})
 	}
 }
@@ -384,10 +397,14 @@ func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.mu.RLock()
+	totalQ := len(h.QuestionIDs)
+	h.mu.RUnlock()
+
 	state := models.GameState{
 		Status:         status,
 		QuestionIndex:  qIdx,
-		TotalQuestions: len(h.QuestionIDs),
+		TotalQuestions: totalQ,
 		TimeLeft:       timeLimit,
 		RoomCode:       roomCode,
 	}
@@ -505,7 +522,9 @@ func (h *Handler) ResetGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reset game")
 		return
 	}
+	h.mu.Lock()
 	h.QuestionIDs = nil
+	h.mu.Unlock()
 	h.Hub.Broadcast(ws.EventGameReset, map[string]string{"status": "reset"})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 }
