@@ -18,8 +18,8 @@ func TestMigrationAndSeed(t *testing.T) {
 	d := newTestDB(t)
 
 	count := d.QuestionCount()
-	if count != 15 {
-		t.Errorf("expected 15 seeded questions, got %d", count)
+	if count != 0 {
+		t.Errorf("expected 0 seeded questions, got %d", count)
 	}
 }
 
@@ -116,7 +116,12 @@ func TestLeaderboard(t *testing.T) {
 func TestGetQuestion(t *testing.T) {
 	d := newTestDB(t)
 
-	q, err := d.GetQuestion(1)
+	id, err := d.AddQuestion("Capital of France?", []string{"Berlin", "Paris"}, 1, "geography")
+	if err != nil {
+		t.Fatalf("AddQuestion: %v", err)
+	}
+
+	q, err := d.GetQuestion(id)
 	if err != nil {
 		t.Fatalf("GetQuestion: %v", err)
 	}
@@ -127,13 +132,15 @@ func TestGetQuestion(t *testing.T) {
 
 func TestGetQuestionIDs(t *testing.T) {
 	d := newTestDB(t)
+	_, _ = d.AddQuestion("Q1", []string{"A", "B"}, 0, "general")
+	_, _ = d.AddQuestion("Q2", []string{"C", "D"}, 1, "general")
 
 	ids, err := d.GetQuestionIDs()
 	if err != nil {
 		t.Fatalf("GetQuestionIDs: %v", err)
 	}
-	if len(ids) != 15 {
-		t.Errorf("expected 15 IDs, got %d", len(ids))
+	if len(ids) != 2 {
+		t.Errorf("expected 2 IDs, got %d", len(ids))
 	}
 }
 
@@ -141,9 +148,10 @@ func TestRecordAnswer(t *testing.T) {
 	d := newTestDB(t)
 
 	p, _ := d.CreatePlayer("Alice")
+	qID, _ := d.AddQuestion("1+1?", []string{"1", "2"}, 1, "math")
 
 	// First answer should succeed
-	recorded, err := d.RecordAnswer(p.ID, 1, 1, true, 500)
+	recorded, err := d.RecordAnswer(p.ID, qID, 1, true, 500)
 	if err != nil {
 		t.Fatalf("RecordAnswer: %v", err)
 	}
@@ -152,7 +160,7 @@ func TestRecordAnswer(t *testing.T) {
 	}
 
 	// Duplicate should be ignored
-	recorded, err = d.RecordAnswer(p.ID, 1, 2, false, 0)
+	recorded, err = d.RecordAnswer(p.ID, qID, 0, false, 0)
 	if err != nil {
 		t.Fatalf("RecordAnswer duplicate: %v", err)
 	}
@@ -165,14 +173,15 @@ func TestHasAnswered(t *testing.T) {
 	d := newTestDB(t)
 
 	p, _ := d.CreatePlayer("Alice")
+	qID, _ := d.AddQuestion("Sun rises in?", []string{"West", "East"}, 1, "general")
 
-	if d.HasAnswered(p.ID, 1) {
+	if d.HasAnswered(p.ID, qID) {
 		t.Error("should not have answered yet")
 	}
 
-	d.RecordAnswer(p.ID, 1, 0, false, 0)
+	d.RecordAnswer(p.ID, qID, 1, true, 100)
 
-	if !d.HasAnswered(p.ID, 1) {
+	if !d.HasAnswered(p.ID, qID) {
 		t.Error("should have answered now")
 	}
 }
@@ -180,21 +189,21 @@ func TestHasAnswered(t *testing.T) {
 func TestGameState(t *testing.T) {
 	d := newTestDB(t)
 
-	status, qID, qIdx, startedAt, timeLimit, err := d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, roomCode, err := d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState: %v", err)
 	}
-	if status != "lobby" || qID != 0 || qIdx != 0 || startedAt != "" || timeLimit != 15 {
+	if status != "lobby" || qID != 0 || qIdx != 0 || startedAt != "" || timeLimit != 15 || roomCode != "" {
 		t.Errorf("unexpected initial state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
 	}
 
 	d.SetGameState("question", 5, 2, "2026-01-01T00:00:00Z", 20)
 
-	status, qID, qIdx, startedAt, timeLimit, err = d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, roomCode, err = d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState after set: %v", err)
 	}
-	if status != "question" || qID != 5 || qIdx != 2 || startedAt != "2026-01-01T00:00:00Z" || timeLimit != 20 {
+	if status != "question" || qID != 5 || qIdx != 2 || startedAt != "2026-01-01T00:00:00Z" || timeLimit != 20 || roomCode != "" {
 		t.Errorf("unexpected state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
 	}
 }
@@ -213,7 +222,7 @@ func TestResetGame(t *testing.T) {
 		t.Errorf("expected 0 players after reset, got %d", c)
 	}
 
-	status, _, _, _, _, _ := d.GetGameState()
+	status, _, _, _, _, _, _ := d.GetGameState()
 	if status != "lobby" {
 		t.Errorf("expected lobby after reset, got %s", status)
 	}
