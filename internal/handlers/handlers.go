@@ -301,7 +301,7 @@ func (h *Handler) loadQuestion(idx int) {
 		Status:          "question",
 		CurrentQuestion: &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category},
 		QuestionIndex:   idx,
-		TotalQuestions:   len(h.QuestionIDs),
+		TotalQuestions:  len(h.QuestionIDs),
 		TimeLeft:        h.TimeLimit,
 	}
 
@@ -330,7 +330,7 @@ func (h *Handler) revealAnswer(qID, idx int) {
 	for _, p := range players {
 		answered := h.DB.HasAnswered(p.ID, qID)
 		result := map[string]interface{}{
-			"correct":     false,
+			"correct":      false,
 			"score_earned": 0,
 			"total_score":  p.Score,
 			"answered":     answered,
@@ -371,7 +371,7 @@ func (h *Handler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 			Status:          "question",
 			CurrentQuestion: &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category},
 			QuestionIndex:   nextIdx,
-			TotalQuestions:   len(h.QuestionIDs),
+			TotalQuestions:  len(h.QuestionIDs),
 			TimeLeft:        h.TimeLimit,
 		})
 	}
@@ -387,7 +387,7 @@ func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 	state := models.GameState{
 		Status:         status,
 		QuestionIndex:  qIdx,
-		TotalQuestions:  len(h.QuestionIDs),
+		TotalQuestions: len(h.QuestionIDs),
 		TimeLeft:       timeLimit,
 		RoomCode:       roomCode,
 	}

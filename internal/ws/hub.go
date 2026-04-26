@@ -11,25 +11,25 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin:  func(r *http.Request) bool { return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
 
 // Event types sent over WebSocket.
 const (
-	EventPlayerJoined    = "player_joined"
-	EventPlayerKicked    = "player_kicked"
-	EventGameCountdown   = "game_countdown"
-	EventNewQuestion     = "new_question"
-	EventPlayerAnswered  = "player_answered"
-	EventTimeUp          = "time_up"
-	EventYourResult      = "your_result"
-	EventGameFinished    = "game_finished"
-	EventGameReset       = "game_reset"
-	EventLeaderboard     = "leaderboard_update"
-	EventPlayersUpdate   = "players_update"
-	EventError           = "error"
+	EventPlayerJoined   = "player_joined"
+	EventPlayerKicked   = "player_kicked"
+	EventGameCountdown  = "game_countdown"
+	EventNewQuestion    = "new_question"
+	EventPlayerAnswered = "player_answered"
+	EventTimeUp         = "time_up"
+	EventYourResult     = "your_result"
+	EventGameFinished   = "game_finished"
+	EventGameReset      = "game_reset"
+	EventLeaderboard    = "leaderboard_update"
+	EventPlayersUpdate  = "players_update"
+	EventError          = "error"
 )
 
 // Message is the envelope sent to clients.
