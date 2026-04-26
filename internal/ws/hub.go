@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,25 +14,48 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin:  func(r *http.Request) bool { return true },
+	CheckOrigin:     isAllowedOrigin,
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
 
+func isAllowedOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+
+	allowed := strings.TrimSpace(os.Getenv("QUIZHUB_ALLOWED_ORIGINS"))
+	if allowed != "" {
+		for _, candidate := range strings.Split(allowed, ",") {
+			if strings.EqualFold(strings.TrimSpace(candidate), origin) {
+				return true
+			}
+		}
+		return false
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
 // Event types sent over WebSocket.
 const (
-	EventPlayerJoined    = "player_joined"
-	EventPlayerKicked    = "player_kicked"
-	EventGameCountdown   = "game_countdown"
-	EventNewQuestion     = "new_question"
-	EventPlayerAnswered  = "player_answered"
-	EventTimeUp          = "time_up"
-	EventYourResult      = "your_result"
-	EventGameFinished    = "game_finished"
-	EventGameReset       = "game_reset"
-	EventLeaderboard     = "leaderboard_update"
-	EventPlayersUpdate   = "players_update"
-	EventError           = "error"
+	EventPlayerJoined   = "player_joined"
+	EventPlayerKicked   = "player_kicked"
+	EventGameCountdown  = "game_countdown"
+	EventNewQuestion    = "new_question"
+	EventPlayerAnswered = "player_answered"
+	EventTimeUp         = "time_up"
+	EventYourResult     = "your_result"
+	EventGameFinished   = "game_finished"
+	EventGameReset      = "game_reset"
+	EventLeaderboard    = "leaderboard_update"
+	EventPlayersUpdate  = "players_update"
+	EventError          = "error"
 )
 
 // Message is the envelope sent to clients.
