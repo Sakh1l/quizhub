@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 
 class QuizHubAPITester:
-    def __init__(self, base_url="https://56ba0c32-f66d-46a8-aaf5-8fc5eb1d5b03.preview.emergentagent.com"):
+    def __init__(self, base_url="https://bug-hunter-192.preview.emergentagent.com"):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
