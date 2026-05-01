@@ -44,6 +44,14 @@
   - No pre-seeded questions — admin creates fresh per quiz
   - Reset clears everything (questions, players, room) for next quiz
   - Fixed FastAPI proxy not forwarding query parameters
+- [May 2026] Phase 8: Post-PR-#1 bug review & fixes
+  - Fixed data race on `Handler.AdminTokens` (concurrent read in `adminOnly` + write in `AdminAuth`) — added dedicated `tokensMu sync.RWMutex`. Race confirmed via `go test -race` prior to fix.
+  - Fixed data race on `Handler.TimeLimit` — writes in `SetTimer` now under `h.mu.Lock()`; reads in `StartGame`/`revealAnswer` now cache value under `h.mu.RLock()`.
+  - Fixed supervisor backend crash-loop: `backend/server.py` pointed to `/app/backend/quizhub` (missing); changed `GO_BINARY` default to `../quizhub` with `QUIZHUB_BINARY` env override. Rebuilt binary.
+  - Added regression test `TestConcurrentAdminAccess` in `handlers_test.go`.
+  - All checks green: `go build`, `go vet`, `gofmt -l`, `go test -race` on full module. External URL (`/api/health`, admin login, full flow) verified.
+
+
 
 ## Admin Credentials
 - Default PIN: `1234` (configurable via `QUIZHUB_ADMIN_PIN` env)

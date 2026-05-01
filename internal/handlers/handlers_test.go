@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/sakh1l/quizhub/internal/db"
@@ -539,4 +540,26 @@ func TestFullGameFlow(t *testing.T) {
 	if state.Status != "lobby" {
 		t.Errorf("expected lobby after reset, got %s", state.Status)
 	}
+}
+
+// TestConcurrentAdminAccess ensures AdminTokens map is safe for concurrent
+// read (adminOnly middleware) and write (AdminAuth handler). Runs under -race
+// to detect data races on h.AdminTokens.
+func TestConcurrentAdminAccess(t *testing.T) {
+	_, mux := setupTestHandler(t)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			doRequest(mux, http.MethodPost, "/api/admin/auth", map[string]string{"pin": "1234"})
+		}()
+		go func() {
+			defer wg.Done()
+			// Unknown token — exercises the read path in adminOnly
+			doAdminRequest(mux, http.MethodPost, "/api/admin/timer", map[string]int{"time_limit": 20}, "nonexistent")
+		}()
+	}
+	wg.Wait()
 }

@@ -26,7 +26,8 @@ type Handler struct {
 	TimeLimit   int
 	AdminPIN    string
 	AdminTokens map[string]bool
-	mu          sync.RWMutex // protects QuestionIDs
+	mu          sync.RWMutex // protects QuestionIDs and TimeLimit
+	tokensMu    sync.RWMutex // protects AdminTokens
 	timerMu     sync.Mutex
 	activeTimer *time.Timer
 }
@@ -84,7 +85,10 @@ func methodOnly(method string, next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
-		if token == "" || !h.AdminTokens[token] {
+		h.tokensMu.RLock()
+		ok := token != "" && h.AdminTokens[token]
+		h.tokensMu.RUnlock()
+		if !ok {
 			writeError(w, http.StatusUnauthorized, "admin access required")
 			return
 		}
@@ -262,8 +266,9 @@ func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
 
 	h.mu.Lock()
 	h.QuestionIDs = ids
+	timeLimit := h.TimeLimit
 	h.mu.Unlock()
-	if err := h.DB.SetGameState("countdown", 0, 0, "", h.TimeLimit); err != nil {
+	if err := h.DB.SetGameState("countdown", 0, 0, "", timeLimit); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start countdown")
 		return
 	}
@@ -326,7 +331,11 @@ func (h *Handler) revealAnswer(qID, idx int) {
 		return
 	}
 
-	h.DB.SetGameState("reveal", qID, idx, "", h.TimeLimit)
+	h.mu.RLock()
+	timeLimit := h.TimeLimit
+	h.mu.RUnlock()
+
+	h.DB.SetGameState("reveal", qID, idx, "", timeLimit)
 
 	h.Hub.Broadcast(ws.EventTimeUp, map[string]interface{}{
 		"question_id":    qID,
@@ -542,7 +551,9 @@ func (h *Handler) AdminAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := generateToken()
+	h.tokensMu.Lock()
 	h.AdminTokens[token] = true
+	h.tokensMu.Unlock()
 	writeJSON(w, http.StatusOK, models.AdminAuthResponse{Token: token})
 }
 
@@ -556,8 +567,10 @@ func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "time_limit must be between 5 and 120 seconds")
 		return
 	}
+	h.mu.Lock()
 	h.TimeLimit = req.TimeLimit
-	writeJSON(w, http.StatusOK, map[string]int{"time_limit": h.TimeLimit})
+	h.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]int{"time_limit": req.TimeLimit})
 }
 
 func (h *Handler) QuestionsRouter(w http.ResponseWriter, r *http.Request) {

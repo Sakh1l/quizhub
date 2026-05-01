@@ -11,7 +11,10 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from contextlib import asynccontextmanager
 
-GO_BINARY: str = os.path.join(os.path.dirname(__file__), "quizhub")
+GO_BINARY: str = os.environ.get(
+    "QUIZHUB_BINARY",
+    os.path.join(os.path.dirname(__file__), "..", "quizhub"),
+)
 GO_PORT: str = os.getenv("GO_PORT", "8002")
 GO_URL: str = f"http://127.0.0.1:{GO_PORT}"
 GO_WS_URL: str = f"ws://127.0.0.1:{GO_PORT}"
