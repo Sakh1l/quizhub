@@ -61,7 +61,7 @@
   function connectWS() {
     if (socket && socket.readyState <= 1) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    socket = new WebSocket(`${proto}//${location.host}/api/ws?role=admin`);
+    socket = new WebSocket(`${proto}//${location.host}/api/ws?role=admin&admin_token=${encodeURIComponent(adminToken || '')}`);
     socket.onopen = () => { clearTimeout(reconnectTimer); updateWSStatus(true); };
     socket.onmessage = (evt) => { try { handleWS(JSON.parse(evt.data)); } catch (_) {} };
     socket.onclose = () => { updateWSStatus(false); reconnectTimer = setTimeout(connectWS, 3000); };

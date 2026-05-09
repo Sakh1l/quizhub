@@ -55,7 +55,7 @@ func main() {
 
 	port := os.Getenv("QUIZHUB_PORT")
 	if port == "" {
-		port = "8002"
+		port = "8080"
 	}
 
 	srv := &http.Server{
