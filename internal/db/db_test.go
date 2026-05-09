@@ -183,7 +183,7 @@ func TestGameState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGameState: %v", err)
 	}
-	if status != "lobby" || qID != 0 || qIdx != 0 || startedAt != "" || timeLimit != 15 {
+	if status != "lobby" || qID != 0 || qIdx != 0 || startedAt != "" || timeLimit != 15 || roomCode != "" {
 		t.Errorf("unexpected initial state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
 	}
 	d.SetGameState("question", 5, 2, "2026-01-01T00:00:00Z", 20)
@@ -191,7 +191,7 @@ func TestGameState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGameState after set: %v", err)
 	}
-	if status != "question" || qID != 5 || qIdx != 2 || startedAt != "2026-01-01T00:00:00Z" || timeLimit != 20 {
+	if status != "question" || qID != 5 || qIdx != 2 || startedAt != "2026-01-01T00:00:00Z" || timeLimit != 20 || roomCode != "" {
 		t.Errorf("unexpected state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
 	}
 }

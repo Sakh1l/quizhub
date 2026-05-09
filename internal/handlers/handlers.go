@@ -353,9 +353,10 @@ func (h *Handler) RoomInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status, _, _, _, _, _, _ := h.DB.GetGameState()
-	writeJSON(w, http.StatusOK, map[string]string{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"room_code": activeCode,
 		"status":    status,
+		"joinable":  status == "lobby",
 	})
 }
 
@@ -474,7 +475,7 @@ func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.setTimeLimit(req.Duration)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "timer set"})
+	writeJSON(w, http.StatusOK, map[string]int{"time_limit": h.getTimeLimit()})
 }
 
 func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
