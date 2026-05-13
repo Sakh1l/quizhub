@@ -15,7 +15,6 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin:     isAllowedOrigin,
-	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
@@ -47,6 +46,8 @@ func isAllowedOrigin(r *http.Request) bool {
 const (
 	EventPlayerJoined   = "player_joined"
 	EventPlayerKicked   = "player_kicked"
+	EventRoomCreated    = "room_created"
+	EventGameStarted    = "game_started"
 	EventGameCountdown  = "game_countdown"
 	EventNewQuestion    = "new_question"
 	EventPlayerAnswered = "player_answered"

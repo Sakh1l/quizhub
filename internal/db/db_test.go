@@ -179,7 +179,7 @@ func TestHasAnswered(t *testing.T) {
 
 func TestGameState(t *testing.T) {
 	d := newTestDB(t)
-	status, qID, qIdx, startedAt, timeLimit, _, err := d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, roomCode, err := d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestGameState(t *testing.T) {
 		t.Errorf("unexpected initial state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
 	}
 	d.SetGameState("question", 5, 2, "2026-01-01T00:00:00Z", 20)
-	status, qID, qIdx, startedAt, timeLimit, _, err = d.GetGameState()
+	status, qID, qIdx, startedAt, timeLimit, roomCode, err = d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState after set: %v", err)
 	}

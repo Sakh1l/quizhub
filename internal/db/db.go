@@ -506,6 +506,81 @@ func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
 
+// CreateRoom stores/updates the active room code and resets to lobby state.
+func (d *DB) CreateRoom(code string) error {
+	status, _, _, _, timeLimit, _, err := d.GetGameState()
+	if err != nil {
+		return err
+	}
+	if timeLimit <= 0 {
+		timeLimit = 15
+	}
+	if status != "lobby" {
+		if err := d.SetGameState("lobby", 0, 0, "", timeLimit); err != nil {
+			return err
+		}
+	}
+	return d.SetRoomCode(code)
+}
+
+func (d *DB) ListQuestions() ([]models.Question, error) { return d.ListAllQuestions() }
+
+func (d *DB) GetLeaderboard() ([]models.LeaderboardEntry, error) { return d.Leaderboard() }
+
+// StartGame initializes game state at first question.
+func (d *DB) StartGame(ids []int) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("no questions")
+	}
+	status, _, _, _, timeLimit, _, err := d.GetGameState()
+	if err != nil {
+		return err
+	}
+	if status == "question" {
+		return fmt.Errorf("game already active")
+	}
+	return d.SetGameState("question", ids[0], 0, time.Now().UTC().Format(time.RFC3339), timeLimit)
+}
+
+// NextQuestion advances to next available question ID order by id.
+func (d *DB) NextQuestion() (bool, error) {
+	_, qID, qIdx, _, timeLimit, _, err := d.GetGameState()
+	if err != nil {
+		return false, err
+	}
+	ids, err := d.GetQuestionIDs()
+	if err != nil {
+		return false, err
+	}
+	if len(ids) == 0 {
+		return false, nil
+	}
+	nextIdx := qIdx + 1
+	if nextIdx >= len(ids) {
+		if err := d.SetGameState("finished", qID, qIdx, "", timeLimit); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	err = d.SetGameState("question", ids[nextIdx], nextIdx, time.Now().UTC().Format(time.RFC3339), timeLimit)
+	return true, err
+}
+
+func (d *DB) SubmitAnswer(playerID string, questionID int, correct bool) error {
+	score := 0
+	if correct {
+		score = 100
+	}
+	_, err := d.RecordAnswer(playerID, questionID, -1, correct, score)
+	if err != nil {
+		return err
+	}
+	if score > 0 {
+		return d.UpdatePlayerScore(playerID, score)
+	}
+	return nil
+}
+
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }

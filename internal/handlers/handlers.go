@@ -361,23 +361,17 @@ func (h *Handler) RoomInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
-	status, currentIdx, currentQ, startTime, timeLimit, total, questionIDs := h.DB.GetGameState()
-	resp := models.GameStateResponse{
-		Status:         status,
-		CurrentIndex:   currentIdx,
-		TotalQuestions: total,
-		StartTime:      startTime,
-		TimeLimit:      timeLimit,
+	status, currentQID, currentIdx, _, timeLimit, roomCode, _ := h.DB.GetGameState()
+	resp := models.GameState{
+		Status:        status,
+		QuestionIndex: currentIdx,
+		TimeLeft:      timeLimit,
+		RoomCode:      roomCode,
 	}
-	if currentQ != nil {
-		resp.CurrentQuestion = &models.Question{
-			ID:      currentQ.ID,
-			Text:    currentQ.Text,
-			Options: currentQ.Options,
+	if currentQID > 0 {
+		if q, err := h.DB.GetQuestion(currentQID); err == nil {
+			resp.CurrentQuestion = &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category}
 		}
-	}
-	if status == "finished" {
-		resp.QuestionIDs = questionIDs
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -392,20 +386,29 @@ func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, _, currentQ, startTime, timeLimit, _, _ := h.DB.GetGameState()
-	if status != "question" || currentQ == nil {
+	status, currentQID, _, startTime, timeLimit, _, _ := h.DB.GetGameState()
+	if status != "question" || currentQID == 0 {
+		writeError(w, http.StatusBadRequest, "no active question")
+		return
+	}
+	currentQ, err := h.DB.GetQuestion(currentQID)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "no active question")
 		return
 	}
 
 	// Check time limit
-	if time.Since(startTime) > time.Duration(timeLimit)*time.Second {
-		writeError(w, http.StatusBadRequest, "time is up")
-		return
+	if startTime != "" {
+		if startedAt, err := time.Parse(time.RFC3339, startTime); err == nil {
+			if time.Since(startedAt) > time.Duration(timeLimit)*time.Second {
+				writeError(w, http.StatusBadRequest, "time is up")
+				return
+			}
+		}
 	}
 
-	isCorrect := req.Option == currentQ.CorrectOption
-	err := h.DB.SubmitAnswer(req.PlayerID, currentQ.ID, isCorrect)
+	isCorrect := req.Option == currentQ.Answer
+	err = h.DB.SubmitAnswer(req.PlayerID, currentQ.ID, isCorrect)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to submit answer")
 		return
@@ -463,7 +466,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	h.clearQuestionIDs()
 	h.Hub.Broadcast(ws.EventRoomCreated, map[string]string{"room_code": code})
-	writeJSON(w, http.StatusOK, map[string]string{"room_code": code})
+	writeJSON(w, http.StatusCreated, map[string]string{"room_code": code})
 }
 
 func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
@@ -493,21 +496,27 @@ func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
 
 	h.Hub.Broadcast(ws.EventGameStarted, nil)
 	h.startQuestion()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "game started"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "countdown", "total_questions": len(ids)})
 }
 
 func (h *Handler) startQuestion() {
-	status, currentIdx, currentQ, _, _, total, _ := h.DB.GetGameState()
-	if status != "question" || currentQ == nil {
+	status, currentQID, currentIdx, _, timeLimit, _, _ := h.DB.GetGameState()
+	if status != "question" || currentQID == 0 {
+		return
+	}
+	q, err := h.DB.GetQuestion(currentQID)
+	if err != nil {
 		return
 	}
 
-	h.Hub.Broadcast(ws.EventNewQuestion, models.GameStateResponse{
-		Status:          status,
-		CurrentIndex:    currentIdx,
-		TotalQuestions:  total,
-		CurrentQuestion: currentQ,
-		TimeLimit:       h.getTimeLimit(),
+	h.Hub.Broadcast(ws.EventNewQuestion, map[string]interface{}{
+		"status":          status,
+		"question_index":  currentIdx,
+		"total_questions": h.DB.QuestionCount(),
+		"current_question": models.QuestionOut{
+			ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category,
+		},
+		"time_left": timeLimit,
 	})
 
 	// Set timer for auto-next
@@ -584,11 +593,12 @@ func (h *Handler) AddQuestion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid question data")
 		return
 	}
-	err := h.DB.AddQuestion(&q)
+	id, err := h.DB.AddQuestion(q.Text, q.Options, q.Answer, q.Category)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add question")
 		return
 	}
+	q.ID = id
 	writeJSON(w, http.StatusCreated, q)
 }
 
@@ -610,5 +620,5 @@ func (h *Handler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) broadcastPlayers() {
 	players, _ := h.DB.ListPlayers()
-	h.Hub.Broadcast(ws.EventPlayerList, players)
+	h.Hub.Broadcast(ws.EventPlayersUpdate, players)
 }

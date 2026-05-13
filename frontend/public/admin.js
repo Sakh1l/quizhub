@@ -178,7 +178,10 @@
           el('span', { className: 'status-dot connected', 'data-testid': 'ws-status-dot' }),
           el('span', { 'data-testid': 'ws-status-text' }, 'Live')),
       ),
-      roomCode ? el('div', { className: 'room-badge', 'data-testid': 'room-badge' }, `Room: ${roomCode}`) : null,
+      el('div', { style: 'display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
+        roomCode ? el('div', { className: 'room-badge', 'data-testid': 'room-badge' }, `Room: ${roomCode}`) : null,
+        el('button', { className: 'btn btn-danger btn-sm', 'data-testid': 'end-game-btn', onclick: handleEndGame }, 'End Game')
+      ),
     ));
 
     if (adminStep === 'setup') renderSetup(app);
@@ -472,15 +475,28 @@
     app.appendChild(card);
   }
 
-  async function handleNewQuiz() {
+  async function resetSession() {
     try { await api('/api/game/reset', { method: 'POST' }); } catch (_) {}
     adminStep = 'setup';
+    currentQuestion = null;
     questions = [];
     roomCode = '';
     roomLink = '';
     players = [];
     leaderboard = [];
+    answerStats = { total: 0, correct: 0, wrong: 0 };
+    clearInterval(timerInterval);
     render();
+  }
+
+  async function handleNewQuiz() {
+    await resetSession();
+  }
+
+  async function handleEndGame() {
+    const ok = window.confirm('End this game and clear all existing quiz data? This cannot be undone.');
+    if (!ok) return;
+    await resetSession();
   }
 
   document.addEventListener('DOMContentLoaded', render);
