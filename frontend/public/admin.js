@@ -130,6 +130,12 @@
         questions = [];
         roomCode = '';
         roomLink = '';
+        answerStats = { total: 0, correct: 0, wrong: 0 };
+        correctAnswer = null;
+        questionIndex = 0;
+        totalQuestions = 0;
+        timeLeft = 0;
+        countdownLeft = 0;
         clearInterval(timerInterval);
         render();
         break;
@@ -180,7 +186,7 @@
       ),
       el('div', { style: 'display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
         roomCode ? el('div', { className: 'room-badge', 'data-testid': 'room-badge' }, `Room: ${roomCode}`) : null,
-        el('button', { className: 'btn btn-danger btn-sm', 'data-testid': 'end-game-btn', onclick: handleEndGame }, 'End Game')
+        el('button', { className: 'btn btn-danger btn-sm', 'data-testid': 'reset-session-btn', onclick: handleResetSession }, 'Reset Session')
       ),
     ));
 
@@ -476,7 +482,7 @@
   }
 
   async function resetSession() {
-    try { await api('/api/game/reset', { method: 'POST' }); } catch (_) {}
+    await api('/api/game/reset', { method: 'POST' });
     adminStep = 'setup';
     currentQuestion = null;
     questions = [];
@@ -485,18 +491,23 @@
     players = [];
     leaderboard = [];
     answerStats = { total: 0, correct: 0, wrong: 0 };
+    correctAnswer = null;
+    questionIndex = 0;
+    totalQuestions = 0;
+    timeLeft = 0;
+    countdownLeft = 0;
     clearInterval(timerInterval);
     render();
   }
 
   async function handleNewQuiz() {
-    await resetSession();
+    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
   }
 
-  async function handleEndGame() {
-    const ok = window.confirm('End this game and clear all existing quiz data? This cannot be undone.');
+  async function handleResetSession() {
+    const ok = window.confirm('Reset this quiz session and clear players, questions, scores, and room data? This cannot be undone.');
     if (!ok) return;
-    await resetSession();
+    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
   }
 
   document.addEventListener('DOMContentLoaded', render);

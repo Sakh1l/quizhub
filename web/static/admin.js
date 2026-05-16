@@ -130,6 +130,12 @@
         questions = [];
         roomCode = '';
         roomLink = '';
+        answerStats = { total: 0, correct: 0, wrong: 0 };
+        correctAnswer = null;
+        questionIndex = 0;
+        totalQuestions = 0;
+        timeLeft = 0;
+        countdownLeft = 0;
         clearInterval(timerInterval);
         render();
         break;
@@ -178,7 +184,10 @@
           el('span', { className: 'status-dot connected', 'data-testid': 'ws-status-dot' }),
           el('span', { 'data-testid': 'ws-status-text' }, 'Live')),
       ),
-      roomCode ? el('div', { className: 'room-badge', 'data-testid': 'room-badge' }, `Room: ${roomCode}`) : null,
+      el('div', { style: 'display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;justify-content:flex-end' },
+        roomCode ? el('div', { className: 'room-badge', 'data-testid': 'room-badge' }, `Room: ${roomCode}`) : null,
+        el('button', { className: 'btn btn-danger btn-sm', 'data-testid': 'reset-session-btn', onclick: handleResetSession }, 'Reset Session')
+      ),
     ));
 
     if (adminStep === 'setup') renderSetup(app);
@@ -472,15 +481,33 @@
     app.appendChild(card);
   }
 
-  async function handleNewQuiz() {
-    try { await api('/api/game/reset', { method: 'POST' }); } catch (_) {}
+  async function resetSession() {
+    await api('/api/game/reset', { method: 'POST' });
     adminStep = 'setup';
+    currentQuestion = null;
     questions = [];
     roomCode = '';
     roomLink = '';
     players = [];
     leaderboard = [];
+    answerStats = { total: 0, correct: 0, wrong: 0 };
+    correctAnswer = null;
+    questionIndex = 0;
+    totalQuestions = 0;
+    timeLeft = 0;
+    countdownLeft = 0;
+    clearInterval(timerInterval);
     render();
+  }
+
+  async function handleNewQuiz() {
+    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
+  }
+
+  async function handleResetSession() {
+    const ok = window.confirm('Reset this quiz session and clear players, questions, scores, and room data? This cannot be undone.');
+    if (!ok) return;
+    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
   }
 
   document.addEventListener('DOMContentLoaded', render);

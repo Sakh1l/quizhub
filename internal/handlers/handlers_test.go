@@ -87,3 +87,84 @@ func TestCreateRoomAndJoin(t *testing.T) {
 		t.Fatalf("join status=%d body=%s", w.Code, w.Body.String())
 	}
 }
+
+func TestResetGameClearsSessionData(t *testing.T) {
+	mux := newMux(t)
+	tok := adminToken(t, mux)
+
+	w := reqJSON(mux, http.MethodPost, "/api/questions/add", map[string]any{
+		"text": "1+1?", "options": []string{"0", "1", "2", "3"}, "answer": 2, "category": "math",
+	}, tok)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add question status=%d body=%s", w.Code, w.Body.String())
+	}
+	var question struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &question); err != nil || question.ID == 0 {
+		t.Fatalf("decode question id: %v body=%s", err, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/questions", map[string]any{"ids": []int{question.ID}}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("select questions status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/room/create", nil, tok)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create room status=%d body=%s", w.Code, w.Body.String())
+	}
+	var room map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &room)
+
+	w = reqJSON(mux, http.MethodPost, "/api/join", map[string]string{"nickname": "Alice", "room_code": room["room_code"]}, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("join status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/game/reset", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reset status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodGet, "/api/players", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("players status=%d body=%s", w.Code, w.Body.String())
+	}
+	var players []any
+	if err := json.Unmarshal(w.Body.Bytes(), &players); err != nil {
+		t.Fatalf("decode players: %v", err)
+	}
+	if len(players) != 0 {
+		t.Fatalf("expected no players after reset, got %d", len(players))
+	}
+
+	w = reqJSON(mux, http.MethodGet, "/api/questions", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("questions status=%d body=%s", w.Code, w.Body.String())
+	}
+	var questions []any
+	if err := json.Unmarshal(w.Body.Bytes(), &questions); err != nil {
+		t.Fatalf("decode questions: %v", err)
+	}
+	if len(questions) != 0 {
+		t.Fatalf("expected no questions after reset, got %d", len(questions))
+	}
+
+	w = reqJSON(mux, http.MethodGet, "/api/game/state", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("state status=%d body=%s", w.Code, w.Body.String())
+	}
+	var state map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if state["status"] != "lobby" || state["room_code"] != nil {
+		t.Fatalf("unexpected state after reset: %+v", state)
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected cleared selected question cache, start status=%d body=%s", w.Code, w.Body.String())
+	}
+}
