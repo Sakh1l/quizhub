@@ -54,7 +54,7 @@ type GameState struct {
 	QuestionIndex   int          `json:"question_index"`
 	TotalQuestions  int          `json:"total_questions"`
 	TimeLeft        int          `json:"time_left"`
-	CorrectAnswer   int          `json:"correct_answer,omitempty"`
+	CorrectAnswer   *int         `json:"correct_answer,omitempty"`
 	RoomCode        string       `json:"room_code,omitempty"`
 }
 

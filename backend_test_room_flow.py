@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 
 class QuizHubRoomFlowTester:
-    def __init__(self, base_url="https://bug-hunter-192.preview.emergentagent.com"):
+    def __init__(self, base_url="https://multiplayer-game-qa.preview.emergentagent.com"):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})

@@ -85,6 +85,44 @@ func (h *Handler) clearQuestionIDs() {
 	h.stateMu.Unlock()
 }
 
+func (h *Handler) appendQuestionID(id int) {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	for _, existing := range h.questionIDs {
+		if existing == id {
+			return
+		}
+	}
+	h.questionIDs = append(h.questionIDs, id)
+}
+
+func (h *Handler) removeQuestionID(id int) {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	filtered := h.questionIDs[:0]
+	for _, existing := range h.questionIDs {
+		if existing != id {
+			filtered = append(filtered, existing)
+		}
+	}
+	h.questionIDs = filtered
+}
+
+func (h *Handler) ensureQuestionIDs() ([]int, error) {
+	ids := h.getQuestionIDs()
+	if len(ids) > 0 {
+		return ids, nil
+	}
+	ids, err := h.DB.GetQuestionIDs()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		h.setQuestionIDs(ids)
+	}
+	return ids, nil
+}
+
 func (h *Handler) getTimeLimit() int {
 	h.stateMu.RLock()
 	defer h.stateMu.RUnlock()
@@ -95,6 +133,19 @@ func (h *Handler) setTimeLimit(v int) {
 	h.stateMu.Lock()
 	h.timeLimit = v
 	h.stateMu.Unlock()
+}
+
+func (h *Handler) roomLink(r *http.Request, code string) string {
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := r.Host
+	return scheme + "://" + host + "/?room=" + code
 }
 
 func (h *Handler) setAdminToken(token string) {
@@ -361,16 +412,42 @@ func (h *Handler) RoomInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
-	status, currentQID, currentIdx, _, timeLimit, roomCode, _ := h.DB.GetGameState()
+	status, currentQID, currentIdx, startedAt, timeLimit, roomCode, _ := h.DB.GetGameState()
 	resp := models.GameState{
 		Status:        status,
 		QuestionIndex: currentIdx,
 		TimeLeft:      timeLimit,
 		RoomCode:      roomCode,
 	}
+	if ids := h.getQuestionIDs(); len(ids) > 0 {
+		resp.TotalQuestions = len(ids)
+	} else {
+		resp.TotalQuestions = h.DB.QuestionCount()
+	}
+	if startedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, startedAt); err == nil {
+			var duration time.Duration
+			if status == "countdown" {
+				duration = countdownDuration * time.Second
+			} else if status == "question" {
+				duration = time.Duration(timeLimit) * time.Second
+			}
+			if duration > 0 {
+				remaining := int(time.Until(parsed.Add(duration)).Seconds())
+				if remaining < 0 {
+					remaining = 0
+				}
+				resp.TimeLeft = remaining
+			}
+		}
+	}
 	if currentQID > 0 {
 		if q, err := h.DB.GetQuestion(currentQID); err == nil {
 			resp.CurrentQuestion = &models.QuestionOut{ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category}
+			if status == "reveal" {
+				answer := q.Answer
+				resp.CorrectAnswer = &answer
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -378,11 +455,13 @@ func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PlayerID string `json:"player_id"`
-		Option   int    `json:"option"`
+		PlayerID   string `json:"player_id"`
+		QuestionID int    `json:"question_id"`
+		Answer     int    `json:"answer"`
+		Option     int    `json:"option"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PlayerID == "" {
-		writeError(w, http.StatusBadRequest, "player_id and option are required")
+		writeError(w, http.StatusBadRequest, "player_id and answer are required")
 		return
 	}
 
@@ -391,30 +470,83 @@ func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no active question")
 		return
 	}
+	if req.QuestionID != 0 && req.QuestionID != currentQID {
+		writeError(w, http.StatusBadRequest, "question is no longer active")
+		return
+	}
 	currentQ, err := h.DB.GetQuestion(currentQID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "no active question")
 		return
 	}
+	selected := req.Answer
+	if req.Answer == 0 && req.Option != 0 {
+		selected = req.Option
+	}
+	if selected < 0 || selected >= len(currentQ.Options) {
+		writeError(w, http.StatusBadRequest, "answer option is invalid")
+		return
+	}
+	if _, err := h.DB.GetPlayer(req.PlayerID); err != nil {
+		writeError(w, http.StatusNotFound, "player not found")
+		return
+	}
+	if h.DB.HasAnswered(req.PlayerID, currentQ.ID) {
+		writeError(w, http.StatusConflict, "answer already submitted")
+		return
+	}
 
 	// Check time limit
+	elapsed := time.Duration(0)
 	if startTime != "" {
 		if startedAt, err := time.Parse(time.RFC3339, startTime); err == nil {
-			if time.Since(startedAt) > time.Duration(timeLimit)*time.Second {
+			elapsed = time.Since(startedAt)
+			if elapsed > time.Duration(timeLimit)*time.Second {
 				writeError(w, http.StatusBadRequest, "time is up")
 				return
 			}
 		}
 	}
 
-	isCorrect := req.Option == currentQ.Answer
-	err = h.DB.SubmitAnswer(req.PlayerID, currentQ.ID, isCorrect)
+	isCorrect := selected == currentQ.Answer
+	scoreEarned := 0
+	if isCorrect {
+		totalMS := (time.Duration(timeLimit) * time.Second).Milliseconds()
+		remainingMS := totalMS - elapsed.Milliseconds()
+		if remainingMS < 0 {
+			remainingMS = 0
+		}
+		scoreEarned = int((remainingMS * 1000) / totalMS)
+		if scoreEarned < 10 {
+			scoreEarned = 10
+		}
+	}
+	recorded, err := h.DB.RecordAnswer(req.PlayerID, currentQ.ID, selected, isCorrect, scoreEarned)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to submit answer")
 		return
 	}
+	if !recorded {
+		writeError(w, http.StatusConflict, "answer already submitted")
+		return
+	}
+	if scoreEarned > 0 {
+		if err := h.DB.UpdatePlayerScore(req.PlayerID, scoreEarned); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update score")
+			return
+		}
+	}
+	player, _ := h.DB.GetPlayer(req.PlayerID)
+	h.Hub.SendToPlayer(req.PlayerID, ws.EventYourResult, models.AnswerResponse{
+		Correct:       isCorrect,
+		CorrectAnswer: currentQ.Answer,
+		ScoreEarned:   scoreEarned,
+		TotalScore:    player.Score,
+	})
+	h.broadcastAnswerStats(currentQ.ID)
+	h.broadcastLeaderboard()
 
-	writeJSON(w, http.StatusOK, map[string]bool{"correct": isCorrect})
+	writeJSON(w, http.StatusOK, map[string]bool{"recorded": true})
 }
 
 func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
@@ -457,51 +589,97 @@ func (h *Handler) AdminAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
+	ids, err := h.ensureQuestionIDs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load questions")
+		return
+	}
+	if len(ids) == 0 {
+		writeError(w, http.StatusBadRequest, "add at least one question before creating a room")
+		return
+	}
+
 	code := generateRoomCode()
-	err := h.DB.CreateRoom(code)
+	err = h.DB.CreateRoom(code)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create room")
 		return
 	}
 
-	h.clearQuestionIDs()
 	h.Hub.Broadcast(ws.EventRoomCreated, map[string]string{"room_code": code})
-	writeJSON(w, http.StatusCreated, map[string]string{"room_code": code})
+	writeJSON(w, http.StatusCreated, map[string]string{"room_code": code, "link": h.roomLink(r, code)})
 }
 
 func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Duration int `json:"duration"`
+		Duration  int `json:"duration"`
+		TimeLimit int `json:"time_limit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Duration <= 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid duration")
 		return
 	}
-	h.setTimeLimit(req.Duration)
+	duration := req.TimeLimit
+	if duration == 0 {
+		duration = req.Duration
+	}
+	if duration < 5 || duration > 120 {
+		writeError(w, http.StatusBadRequest, "time_limit must be between 5 and 120 seconds")
+		return
+	}
+	h.setTimeLimit(duration)
+	if err := h.DB.SetTimeLimit(duration); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set timer")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]int{"time_limit": h.getTimeLimit()})
 }
 
 func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
-	ids := h.getQuestionIDs()
+	ids, err := h.ensureQuestionIDs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load questions")
+		return
+	}
 	if len(ids) == 0 {
 		writeError(w, http.StatusBadRequest, "no questions selected")
 		return
 	}
-
-	err := h.DB.StartGame(ids)
-	if err != nil {
+	status, _, _, _, _, _, _ := h.DB.GetGameState()
+	if status != "lobby" {
+		writeError(w, http.StatusBadRequest, "game already in progress")
+		return
+	}
+	timeLimit := h.getTimeLimit()
+	if timeLimit < 5 || timeLimit > 120 {
+		timeLimit = 15
+		h.setTimeLimit(timeLimit)
+	}
+	if err := h.DB.SetGameState("countdown", 0, 0, time.Now().UTC().Format(time.RFC3339), timeLimit); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start game")
 		return
 	}
 
-	h.Hub.Broadcast(ws.EventGameStarted, nil)
-	h.startQuestion()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "countdown", "total_questions": len(ids)})
+	h.Hub.Broadcast(ws.EventGameCountdown, map[string]interface{}{
+		"duration":        countdownDuration,
+		"total_questions": len(ids),
+	})
+	h.startTimer(countdownDuration*time.Second, func() { h.startQuestionAt(0) })
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "countdown", "duration": countdownDuration, "total_questions": len(ids)})
 }
 
-func (h *Handler) startQuestion() {
-	status, currentQID, currentIdx, _, timeLimit, _, _ := h.DB.GetGameState()
-	if status != "question" || currentQID == 0 {
+func (h *Handler) startQuestionAt(index int) {
+	ids, err := h.ensureQuestionIDs()
+	if err != nil || index < 0 || index >= len(ids) {
+		return
+	}
+	timeLimit := h.getTimeLimit()
+	if timeLimit < 5 || timeLimit > 120 {
+		timeLimit = 15
+	}
+	currentQID := ids[index]
+	if err := h.DB.SetGameState("question", currentQID, index, time.Now().UTC().Format(time.RFC3339), timeLimit); err != nil {
 		return
 	}
 	q, err := h.DB.GetQuestion(currentQID)
@@ -510,37 +688,72 @@ func (h *Handler) startQuestion() {
 	}
 
 	h.Hub.Broadcast(ws.EventNewQuestion, map[string]interface{}{
-		"status":          status,
-		"question_index":  currentIdx,
-		"total_questions": h.DB.QuestionCount(),
+		"status":          "question",
+		"question_index":  index,
+		"total_questions": len(ids),
 		"current_question": models.QuestionOut{
 			ID: q.ID, Text: q.Text, Options: q.Options, Category: q.Category,
 		},
 		"time_left": timeLimit,
 	})
 
-	// Set timer for auto-next
-	h.startTimer(time.Duration(h.getTimeLimit())*time.Second, func() {
-		h.Hub.Broadcast(ws.EventTimeUp, nil)
-	})
+	h.startTimer(time.Duration(timeLimit)*time.Second, h.revealCurrentQuestion)
+}
+
+func (h *Handler) revealCurrentQuestion() {
+	status, currentQID, currentIdx, _, timeLimit, _, _ := h.DB.GetGameState()
+	if status != "question" || currentQID == 0 {
+		return
+	}
+	q, err := h.DB.GetQuestion(currentQID)
+	if err != nil {
+		return
+	}
+	if err := h.DB.SetGameState("reveal", currentQID, currentIdx, "", timeLimit); err != nil {
+		return
+	}
+	h.Hub.Broadcast(ws.EventTimeUp, map[string]interface{}{"correct_answer": q.Answer})
+	players, _ := h.DB.ListPlayers()
+	for _, player := range players {
+		_, correct, scoreEarned, totalScore, found, err := h.DB.GetPlayerAnswerResult(player.ID, currentQID)
+		if err != nil || !found {
+			continue
+		}
+		h.Hub.SendToPlayer(player.ID, ws.EventYourResult, models.AnswerResponse{
+			Correct:       correct,
+			CorrectAnswer: q.Answer,
+			ScoreEarned:   scoreEarned,
+			TotalScore:    totalScore,
+		})
+	}
+	h.broadcastAnswerStats(currentQID)
+	h.broadcastLeaderboard()
 }
 
 func (h *Handler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 	h.stopTimer()
-	hasNext, err := h.DB.NextQuestion()
+	status, _, currentIdx, _, timeLimit, _, _ := h.DB.GetGameState()
+	if status != "reveal" {
+		writeError(w, http.StatusBadRequest, "question is not ready to advance")
+		return
+	}
+	ids, err := h.ensureQuestionIDs()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to advance question")
+		writeError(w, http.StatusInternalServerError, "failed to load questions")
 		return
 	}
 
-	if !hasNext {
+	nextIdx := currentIdx + 1
+	if nextIdx >= len(ids) {
+		_ = h.DB.SetGameState("finished", 0, currentIdx, "", timeLimit)
+		h.broadcastLeaderboard()
 		h.Hub.Broadcast(ws.EventGameFinished, nil)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "game finished"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "finished"})
 		return
 	}
 
-	h.startQuestion()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "next question"})
+	h.startQuestionAt(nextIdx)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "question", "question_index": nextIdx})
 }
 
 func (h *Handler) ResetGame(w http.ResponseWriter, r *http.Request) {
@@ -589,8 +802,12 @@ func (h *Handler) UpdateSelectedQuestions(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) AddQuestion(w http.ResponseWriter, r *http.Request) {
 	var q models.Question
-	if err := json.NewDecoder(r.Body).Decode(&q); err != nil || q.Text == "" || len(q.Options) < 2 {
+	if err := json.NewDecoder(r.Body).Decode(&q); err != nil || strings.TrimSpace(q.Text) == "" || len(q.Options) < 2 {
 		writeError(w, http.StatusBadRequest, "invalid question data")
+		return
+	}
+	if q.Answer < 0 || q.Answer >= len(q.Options) {
+		writeError(w, http.StatusBadRequest, "correct answer is invalid")
 		return
 	}
 	id, err := h.DB.AddQuestion(q.Text, q.Options, q.Answer, q.Category)
@@ -599,6 +816,7 @@ func (h *Handler) AddQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.ID = id
+	h.appendQuestionID(id)
 	writeJSON(w, http.StatusCreated, q)
 }
 
@@ -615,7 +833,26 @@ func (h *Handler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete question")
 		return
 	}
+	h.removeQuestionID(req.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (h *Handler) broadcastAnswerStats(questionID int) {
+	total, correct, wrong := h.DB.GetAnswerStats(questionID)
+	h.Hub.BroadcastToRole("admin", ws.EventPlayerAnswered, models.AnswerStats{
+		QuestionID:   questionID,
+		TotalAnswers: total,
+		CorrectCount: correct,
+		WrongCount:   wrong,
+	})
+}
+
+func (h *Handler) broadcastLeaderboard() {
+	leaderboard, err := h.DB.GetLeaderboard()
+	if err != nil {
+		return
+	}
+	h.Hub.Broadcast(ws.EventLeaderboard, leaderboard)
 }
 
 func (h *Handler) broadcastPlayers() {

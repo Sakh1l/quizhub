@@ -295,6 +295,24 @@ func (d *DB) GetPlayerAnswer(playerID string, questionID int) (selected int, cor
 	return
 }
 
+func (d *DB) GetPlayerAnswerResult(playerID string, questionID int) (selected int, correct bool, scoreEarned int, totalScore int, found bool, err error) {
+	var correctInt int
+	err = d.conn.QueryRow(
+		`SELECT a.selected, a.correct, a.score_earned, p.score
+		 FROM answers a
+		 JOIN players p ON p.id = a.player_id
+		 WHERE a.player_id = ? AND a.question_id = ?`,
+		playerID, questionID,
+	).Scan(&selected, &correctInt, &scoreEarned, &totalScore)
+	if err == sql.ErrNoRows {
+		return 0, false, 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, false, 0, 0, false, err
+	}
+	return selected, correctInt == 1, scoreEarned, totalScore, true, nil
+}
+
 // --- Game state operations ---
 
 // GetGameState returns the current game state.
@@ -319,6 +337,11 @@ func (d *DB) SetGameState(status string, questionID, questionIndex int, startedA
 		"UPDATE game_state SET status = ?, current_question_id = ?, question_index = ?, question_started_at = ?, time_limit = ? WHERE id = 1",
 		status, qIDVal, questionIndex, startedVal, timeLimit,
 	)
+	return err
+}
+
+func (d *DB) SetTimeLimit(timeLimit int) error {
+	_, err := d.conn.Exec("UPDATE game_state SET time_limit = ? WHERE id = 1", timeLimit)
 	return err
 }
 
