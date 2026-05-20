@@ -1,69 +1,31 @@
-# QuizHub - PRD
+# QuizHub Bug Fix PRD
 
 ## Original Problem Statement
-1. Read the codebase, check UI testing, create TODO list
-2. Maintain Go stack, single binary with SQLite
-3. Deployment readiness (Option 2: keep SQLite, quick fixes)
-4. WebSocket real-time sync, Admin/Host panel with PIN, Dockerfile
+There is a bug: when admin after adding questions and starting the game, the game says "questions not selected". The requested validation was full UI testing with 2 sample questions and 2 players joining and answering questions. Admin access code: 1234.
 
-## Architecture
-- **Go binary** (14MB): API + embedded frontend + SQLite
-- **WebSocket hub**: Real-time events for players AND admin
-- **Admin panel**: PIN-protected (/admin.html) with full game/question management
-- **Deployment**: FastAPI proxy for Emergent K8s; standalone Docker for self-hosted
+## Architecture Decisions
+- App is a Go/SQLite/WebSocket QuizHub server embedded behind the FastAPI proxy in `/app/backend/server.py`.
+- Frontend is vanilla JavaScript served from embedded Go static files under `/app/web/static`.
+- Question selection is now resilient: newly added questions are tracked for the active quiz, and create/start falls back to DB questions if no explicit selected-question cache exists.
+- The Go binary `/app/quizhub` was rebuilt and backend restarted so production preview runs the fixed source.
 
-### API Endpoints (18 total)
-- Public: health, join, players, game/state, answer, leaderboard, categories, questions
-- Game control: game/start, game/next, game/reset, game/start-with-categories
-- Admin (PIN-protected): admin/auth, admin/kick, admin/timer, admin/config, questions/add, questions/edit, questions/delete
-- WebSocket: /api/ws (role=player|admin)
+## Implemented
+- Fixed admin-created questions not being selected when starting a room/game.
+- Hardened room creation/start game flow so it loads available questions and avoids false "no questions selected" failures.
+- Confirmed timer payload compatibility with UI (`time_limit`) and full countdown/question/reveal/finish flow.
+- Verified with self Playwright flow and independent testing agent: admin added 2 questions, 2 players joined, answered both questions, and final leaderboard displayed.
 
-## What's Been Implemented
-- [Jan 2026] Phase 1: Codebase audit, TODO.md
-- [Jan 2026] Phase 2: Full refactor to single binary, 35 Go unit tests
-- [Jan 2026] Phase 3: Deployment readiness (FastAPI proxy, port config)
-- [Jan 2026] Phase 4: WebSocket + Admin + Dockerfile
-  - WebSocket hub with gorilla/websocket, broadcasts: player_joined, game_started, new_question, player_answered, timer_tick, game_finished, game_reset, player_kicked, leaderboard_update, players_update
-  - Admin panel: PIN auth ("1234" default), game controls, timer config, player kick, question CRUD, live answer stats, live leaderboard
-  - Dockerfile: multi-stage (golang:1.24-alpine -> alpine:3.21), single binary, /app/data volume
-  - 38 Go unit tests (14 DB + 24 handler) all passing
-  - E2E tests: 100% pass (18 backend + 14 frontend + WS)
-- [Jan 2026] Phase 5: Bug fixes (WebSocket Hijacker, Play Again, handleNextQuestion)
-- [Apr 2026] Phase 6: Major game flow rewrite
-  - Admin-controlled game: lobby → 10s countdown → question → reveal → admin next → ... → finished
-  - Server-side goroutine timers for countdown and question timer
-  - Answer endpoint returns {recorded: true} only (no spoilers)
-  - Correct answer revealed via WS "time_up" event to all players simultaneously
-  - Player view: no control buttons, reactive to WS events, personal rank at end
-  - Admin view: Start Game, Next Question, live leaderboard + answer stats during game
-  - Millisecond-precision scoring (0-1000 scale based on speed)
-- [Apr 2026] Phase 7: Room system + new landing page
-  - Player landing page (/): room code + name entry to join
-  - Admin flow: PIN → add custom questions → create room → share code/link → lobby → game
-  - Room codes: 6-char alphanumeric, shareable links (?room=CODE)
-  - No pre-seeded questions — admin creates fresh per quiz
-  - Reset clears everything (questions, players, room) for next quiz
-  - Fixed FastAPI proxy not forwarding query parameters
-- [May 2026] Phase 8: Post-PR-#1 bug review & fixes
-  - Fixed data race on `Handler.AdminTokens` (concurrent read in `adminOnly` + write in `AdminAuth`) — added dedicated `tokensMu sync.RWMutex`. Race confirmed via `go test -race` prior to fix.
-  - Fixed data race on `Handler.TimeLimit` — writes in `SetTimer` now under `h.mu.Lock()`; reads in `StartGame`/`revealAnswer` now cache value under `h.mu.RLock()`.
-  - Fixed supervisor backend crash-loop: `backend/server.py` pointed to `/app/backend/quizhub` (missing); changed `GO_BINARY` default to `../quizhub` with `QUIZHUB_BINARY` env override. Rebuilt binary.
-  - Added regression test `TestConcurrentAdminAccess` in `handlers_test.go`.
-  - All checks green: `go build`, `go vet`, `gofmt -l`, `go test -race` on full module. External URL (`/api/health`, admin login, full flow) verified.
+## Prioritized Backlog
+### P0
+- None currently; reported game-start bug is fixed and verified.
 
+### P1
+- Add a visible success toast after question creation and room creation for clearer host feedback.
+- Add a lobby-side question count indicator before starting the game.
 
+### P2
+- Modularize `/app/internal/handlers/handlers.go` to reduce future regression risk.
+- Add more permanent UI regression tests around WebSocket reconnect and room reset edge cases.
 
-## Admin Credentials
-- Default PIN: `1234` (configurable via `QUIZHUB_ADMIN_PIN` env)
-- Admin URL: `/admin.html`
-
-## Deployment Notes
-- SQLite data is ephemeral on Emergent (resets on pod restart)
-- For Docker self-hosted: `docker build -t quizhub . && docker run -p 8080:8080 -v ./data:/app/data quizhub`
-
-## Backlog
-- P1: MongoDB migration, room system
-- P2: Sound effects, dark/light toggle, avatars, confetti, streak bonuses
-
-## Documentation
-- [Jan 2026] Comprehensive README.md (544 lines) covering: features, tech stack, project structure, local setup, 3 deployment options (Docker, bare binary/VPS/systemd, Docker Compose + Caddy HTTPS), configuration, admin panel guide, full API reference (18 endpoints), WebSocket events, testing, troubleshooting
+## Next Tasks
+- Optional UX polish: improve admin setup clarity around selected questions and game readiness.
