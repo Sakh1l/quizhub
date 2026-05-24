@@ -45,9 +45,7 @@ func isAllowedOrigin(r *http.Request) bool {
 // Event types sent over WebSocket.
 const (
 	EventPlayerJoined   = "player_joined"
-	EventPlayerKicked   = "player_kicked"
 	EventRoomCreated    = "room_created"
-	EventGameStarted    = "game_started"
 	EventGameCountdown  = "game_countdown"
 	EventNewQuestion    = "new_question"
 	EventPlayerAnswered = "player_answered"
@@ -144,25 +142,6 @@ func (h *Hub) Broadcast(event string, data interface{}) {
 	h.broadcast <- b
 }
 
-// BroadcastToRole sends a message only to clients with a specific role.
-func (h *Hub) BroadcastToRole(role, event string, data interface{}) {
-	msg := Message{Event: event, Data: data}
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for client := range h.clients {
-		if client.Role == role {
-			select {
-			case client.send <- b:
-			default:
-			}
-		}
-	}
-}
-
 // SendToPlayer sends a message to a specific player.
 func (h *Hub) SendToPlayer(playerID, event string, data interface{}) {
 	msg := Message{Event: event, Data: data}
@@ -179,23 +158,6 @@ func (h *Hub) SendToPlayer(playerID, event string, data interface{}) {
 			default:
 			}
 		}
-	}
-}
-
-// DisconnectPlayer forcefully disconnects a player by ID.
-func (h *Hub) DisconnectPlayer(playerID string) {
-	h.mu.RLock()
-	var target *Client
-	for client := range h.clients {
-		if client.PlayerID == playerID {
-			target = client
-			break
-		}
-	}
-	h.mu.RUnlock()
-	if target != nil {
-		h.unregister <- target
-		target.conn.Close()
 	}
 }
 
