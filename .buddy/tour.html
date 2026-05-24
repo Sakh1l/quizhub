@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Buddy Tour</title>
+<style>
+  :root {
+    --bg: #fdfbf7; --panel: #ffffff; --ink: #2c2a3a; --muted: #6b6880;
+    --accent: #7a5cff; --accent-soft: #efeaff; --warm: #ffb86b;
+    --good: #30c48d; --bad: #ff6b6b; --line: #ece8de;
+    --code-bg: #f5f1ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1820; --panel: #24222e; --ink: #f1eef9; --muted: #a8a4bd;
+      --accent: #a48cff; --accent-soft: #2e2944; --warm: #ffc98a;
+      --line: #34303f; --code-bg: #1f1d28;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    line-height: 1.55; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre.code { background: var(--code-bg); padding: 12px 14px; border-radius: 8px;
+    overflow-x: auto; position: relative; }
+  pre.code code { background: transparent; padding: 0; }
+  pre.code .copy { position: absolute; top: 8px; right: 8px; font-size: 11px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 3px 8px; cursor: pointer; color: var(--muted); }
+  pre.code .copy:hover { color: var(--ink); }
+  blockquote { border-left: 4px solid var(--accent-soft); margin: 1em 0;
+    padding: 4px 12px; color: var(--muted); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 1.5em 0; }
+  h1,h2,h3,h4 { line-height: 1.25; }
+
+  .app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--line);
+    padding: 18px 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .brand { font-weight: 700; font-size: 18px; margin-bottom: 6px; }
+  .brand .emoji { font-size: 22px; margin-right: 6px; }
+  .repo { font-size: 12px; color: var(--muted); margin-bottom: 12px;
+    word-break: break-word; }
+
+  .xp-wrap { background: var(--accent-soft); border-radius: 999px; height: 8px;
+    overflow: hidden; margin: 10px 0 4px; }
+  .xp-bar { background: var(--accent); height: 100%; width: 0%; transition: width .3s ease; }
+  .xp-text { font-size: 11px; color: var(--muted); margin-bottom: 14px; }
+
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button { all: unset; cursor: pointer; padding: 8px 10px; border-radius: 8px;
+    display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .nav button:hover { background: var(--accent-soft); }
+  .nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav .check { margin-left: auto; opacity: 0; transition: opacity .2s; }
+  .nav button.done .check { opacity: 1; color: var(--good); }
+  .nav .empty-tag { font-size: 10px; color: var(--muted); margin-left: auto; }
+
+  .search { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink);
+    font-family: inherit; font-size: 13px; margin-bottom: 12px; }
+
+  .main { padding: 32px 48px; max-width: 920px; }
+  .crumb { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .pageTitle { display: flex; align-items: center; gap: 12px; font-size: 28px;
+    margin: 0 0 8px; }
+  .pageTitle .icon { font-size: 32px; }
+  .src-link { font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+  .summary { font-size: 16px; color: var(--muted); margin-bottom: 20px; }
+
+  .content { font-size: 15px; }
+  .content h1 { font-size: 22px; margin-top: 1.4em; }
+  .content h2 { font-size: 18px; margin-top: 1.4em; }
+  .content h3 { font-size: 16px; margin-top: 1.2em; }
+  .content ul, .content ol { padding-left: 22px; }
+  .content li { margin: 4px 0; }
+
+  .empty { padding: 18px; background: var(--accent-soft); border-radius: 10px;
+    color: var(--ink); }
+
+  table.md-table { border-collapse: collapse; width: 100%; margin: 14px 0;
+    font-size: 14px; display: block; overflow-x: auto; }
+  table.md-table th, table.md-table td { border: 1px solid var(--line);
+    padding: 8px 12px; vertical-align: top; }
+  table.md-table thead { background: var(--accent-soft); }
+  table.md-table th { font-weight: 600; color: var(--ink); }
+  table.md-table tbody tr:nth-child(even) { background: rgba(122,92,255,0.04); }
+
+  /* TL;DR card at top of each section */
+  .tldr { background: var(--accent-soft); border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: 12px 16px; margin: 0 0 22px;
+    font-size: 15px; color: var(--ink); }
+  .tldr .label { font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
+
+  /* Accordion sections */
+  .content details { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 4px 16px; margin: 10px 0;
+    transition: box-shadow .2s; }
+  .content details[open] { box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+  .content details > summary { cursor: pointer; padding: 12px 0;
+    font-weight: 600; font-size: 16px; list-style: none;
+    display: flex; align-items: center; gap: 10px; }
+  .content details > summary::-webkit-details-marker { display: none; }
+  .content details > summary::before { content: "▸"; color: var(--accent);
+    transition: transform .2s; display: inline-block; }
+  .content details[open] > summary::before { transform: rotate(90deg); }
+  .content details > summary:hover { color: var(--accent); }
+  .content details > .acc-body { padding: 0 0 12px; }
+
+  /* Link cards (Curated Links page) */
+  .link-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 720px) { .link-grid { grid-template-columns: 1fr; } }
+  .link-card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; transition: transform .15s, box-shadow .15s; }
+  .link-card:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+  .link-card .title { font-weight: 600; margin-bottom: 4px; display: flex;
+    align-items: center; gap: 8px; }
+  .link-card .desc { color: var(--muted); font-size: 13px; margin: 6px 0 8px; }
+  .link-card .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; background: var(--accent-soft); color: var(--accent); }
+  .pill.must { background: rgba(255,184,107,0.2); color: #b07028; }
+  .pill.optional { background: rgba(168,164,189,0.2); color: var(--muted); }
+
+  .actions { display: flex; gap: 10px; margin: 28px 0 16px; flex-wrap: wrap; }
+  .btn { all: unset; cursor: pointer; padding: 10px 16px; border-radius: 999px;
+    background: var(--accent); color: white; font-size: 14px; font-weight: 600; }
+  .btn.ghost { background: transparent; color: var(--accent);
+    border: 1px solid var(--accent); }
+  .btn.warm { background: var(--warm); color: #2c2a3a; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-size: 11px;
+    font-weight: 600; margin-right: 6px; }
+  .badge.good { background: rgba(48,196,141,0.15); color: var(--good); }
+
+  .footer { font-size: 11px; color: var(--muted); margin-top: 40px;
+    border-top: 1px solid var(--line); padding-top: 14px; }
+
+  /* Quiz */
+  .quiz-q { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px; margin: 12px 0; }
+  .quiz-q .q { font-weight: 600; margin-bottom: 10px; }
+  .quiz-q .opt { display: block; padding: 8px 10px; border-radius: 6px;
+    cursor: pointer; margin: 4px 0; }
+  .quiz-q .opt:hover { background: var(--accent-soft); }
+  .quiz-q .opt.right { background: rgba(48,196,141,0.15); color: var(--good); }
+  .quiz-q .opt.wrong { background: rgba(255,107,107,0.15); color: var(--bad); }
+  .quiz-score { font-size: 18px; font-weight: 700; margin-top: 18px; }
+
+  /* Search results */
+  mark { background: #fff2a8; color: #2c2a3a; padding: 0 2px; border-radius: 2px; }
+  .search-hits { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+
+  @media (max-width: 800px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .main { padding: 22px 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="emoji">🤝</span>Buddy Tour</div>
+    <div class="repo" id="repoName"></div>
+    <input class="search" id="search" placeholder="Search the tour…" />
+    <div class="xp-text" id="xpText">0 / 0 onboarding points</div>
+    <div class="xp-wrap"><div class="xp-bar" id="xpBar"></div></div>
+    <nav class="nav" id="nav"></nav>
+  </aside>
+  <main class="main" id="main">Loading…</main>
+</div>
+
+<script type="application/json" id="buddy-data">{"meta":{"repoName":"quizhub","repoRoot":"/home/sak/Projects/quizhub/quizhub","lastIndexedCommit":"a9877cfda4c6a647ef3a6e4cbadedd3553894f2e","lastRunTimestamp":"2026-05-24T07:30:54.260Z","generatedAt":"2026-05-24T07:30:56.053Z","linksCount":0},"sections":[{"id":"welcome","icon":"👋","title":"Welcome","source":"README_FOR_HUMANS.md","hasContent":true,"summary":"Hi there! I'm Buddy. This file is your home page in this repo.","html":"\u003ch1>Welcome! 👋\u003c/h1>\n\u003cp>Hi there! I&#39;m \u003cstrong>Buddy\u003c/strong>. This file is your home page in this repo.\u003c/p>\n\u003cblockquote>\u003cstrong>First time here?\u003c/strong> This file (and everything in \u003ccode>.buddy/\u003c/code>) is auto-generated to help you understand the project quickly. If sections below look empty or generic, ask Buddy in Copilot CLI: \u003cem>&quot;Scan this repo and fill in .buddy/.&quot;\u003c/em>\u003c/blockquote>\n\u003chr/>\n\u003ch2>What is this project?\u003c/h2>\n\u003cp>\u003cem>(Buddy will fill this in after the first scan.)\u003c/em>\u003c/p>\n\u003cul>\u003cli>\u003cstrong>What it does:\u003c/strong>\u003c/li>\u003cli>\u003cstrong>Who uses it:\u003c/strong>\u003c/li>\u003cli>\u003cstrong>Why it exists:\u003c/strong>\u003c/li>\u003c/ul>\n\u003ch2>Big-picture concepts\u003c/h2>\n\u003cp>\u003cem>(The 3-5 ideas you need to know before reading any code.)\u003c/em>\u003c/p>\n\u003ch2>Quick links\u003c/h2>\n\u003cul>\u003cli>🚀 \u003cstrong>Just want to run it?\u003c/strong> → \u003ca href=\"#getting\" data-tour-link=\"1\">\u003ccode>GETTING_STARTED.md\u003c/code>\u003c/a>\u003c/li>\u003cli>🗺️ \u003cstrong>Where does code live?\u003c/strong> → \u003ca href=\"#map\" data-tour-link=\"1\">\u003ccode>MAP/repo_map.md\u003c/code>\u003c/a>\u003c/li>\u003cli>🏛️ \u003cstrong>How is it built?\u003c/strong> → \u003ca href=\"#architecture\" data-tour-link=\"1\">\u003ccode>ARCHITECTURE.md\u003c/code>\u003c/a>\u003c/li>\u003cli>🧰 \u003cstrong>What tech does it use?\u003c/strong> → \u003ca href=\"#tech\" data-tour-link=\"1\">\u003ccode>TECH_STACK.md\u003c/code>\u003c/a>\u003c/li>\u003cli>🔌 \u003cstrong>What does it talk to?\u003c/strong> → \u003ca href=\"#integrations\" data-tour-link=\"1\">\u003ccode>INTEGRATIONS.md\u003c/code>\u003c/a>\u003c/li>\u003cli>📎 \u003cstrong>Important external docs\u003c/strong> → \u003ca href=\"#links\" data-tour-link=\"1\">\u003ccode>LINKS.md\u003c/code>\u003c/a>\u003c/li>\u003cli>❓ \u003cstrong>Things Buddy isn&#39;t sure about\u003c/strong> → \u003ca href=\"#questions\" data-tour-link=\"1\">\u003ccode>NOTES/open_questions.md\u003c/code>\u003c/a>\u003c/li>\u003c/ul>\n\u003chr/>\n\u003ch2>How to use Buddy\u003c/h2>\n\u003cp>In your terminal:\u003c/p>\n\u003cul>\u003cli>\u003ccode>buddy status\u003c/code> — Is the knowledge here up to date?\u003c/li>\u003cli>\u003ccode>buddy precheck\u003c/code> — Show docs that may be stale based on recent changes.\u003c/li>\u003cli>\u003ccode>buddy open &lt;name&gt;\u003c/code> — Open a Buddy doc (try: \u003ccode>buddy open getting-started\u003c/code>).\u003c/li>\u003cli>\u003ccode>buddy link &lt;url&gt;\u003c/code> — Save an important link with safe redaction.\u003c/li>\u003c/ul>\n\u003cp>In Copilot CLI (after \u003ccode>buddy agent\u003c/code> and \u003ccode>/agents add buddy\u003c/code>):\u003c/p>\n\u003cul>\u003cli>Ask: \u003cem>&quot;Scan this repo and fill in .buddy/&quot;\u003c/em>\u003c/li>\u003cli>Ask: \u003cem>&quot;Where does login happen?&quot;\u003c/em>\u003c/li>\u003cli>Ask: \u003cem>&quot;Update buddy for my changes&quot;\u003c/em> (before committing)\u003c/li>\u003c/ul>"},{"id":"tech","icon":"🧰","title":"Tech Stack","source":"TECH_STACK.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Tech Stack\u003c/h1>\n\u003cblockquote>Buddy fills this in based on actual repo evidence (package.json, requirements.txt, go.mod, pom.xml, etc.).\u003c/blockquote>\n\u003ch2>Languages\u003c/h2>\n\u003cul>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ul>\n\u003ch2>Frameworks\u003c/h2>\n\u003cul>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ul>\n\u003ch2>Build &amp; package\u003c/h2>\n\u003cul>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ul>\n\u003ch2>Tests\u003c/h2>\n\u003cul>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ul>\n\u003ch2>CI / Deploy\u003c/h2>\n\u003cul>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ul>"},{"id":"map","icon":"🗺️","title":"Repo Map","source":"MAP/repo_map.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Repo Map\u003c/h1>\n\u003cblockquote>A folder-by-folder tour of where things live and where to start reading.\u003c/blockquote>\n\u003ch2>Top-level folders\u003c/h2>\n\u003ctable class=\"md-table\">\u003cthead>\u003ctr>\u003cth style=\"text-align:left\">Folder\u003c/th>\u003cth style=\"text-align:left\">Purpose\u003c/th>\u003cth style=\"text-align:left\">Start here?\u003c/th>\u003c/tr>\u003c/thead>\u003ctbody>\u003ctr>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003c/tr>\u003c/tbody>\u003c/table>\n\u003ch2>Where to start reading code\u003c/h2>\n\u003col>\u003cli>\u003cem>(tbd — Buddy will recommend a reading order)\u003c/em>\u003c/li>\u003c/ol>"},{"id":"entry","icon":"🚪","title":"Entry Points","source":"MAP/entry_points.md","hasContent":true,"summary":"| Entry | File | What it does |","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Entry Points\u003c/h1>\n\u003cblockquote>Where execution starts. Servers, CLIs, jobs, schedulers — anything that runs.\u003c/blockquote>\n\u003ctable class=\"md-table\">\u003cthead>\u003ctr>\u003cth style=\"text-align:left\">Entry\u003c/th>\u003cth style=\"text-align:left\">File\u003c/th>\u003cth style=\"text-align:left\">What it does\u003c/th>\u003c/tr>\u003c/thead>\u003ctbody>\u003ctr>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003c/tr>\u003c/tbody>\u003c/table>"},{"id":"flow","icon":"🔁","title":"Data Flow","source":"MAP/data_flow.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Data Flow\u003c/h1>\n\u003cblockquote>The simple version: &quot;X happens → it goes here → then here → then here.&quot;\u003c/blockquote>\n\u003ch2>Common flows\u003c/h2>\n\u003ch3>\u003cem>(flow name)\u003c/em>\u003c/h3>\n\u003col>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ol>"},{"id":"getting","icon":"🚀","title":"Get It Running","source":"GETTING_STARTED.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Getting Started\u003c/h1>\n\u003cblockquote>Buddy will fill this in after scanning the repo. Until then, here&#39;s a template.\u003c/blockquote>\n\u003ch2>Prerequisites\u003c/h2>\n\u003cul>\u003cli>\u003cem>(e.g. Node 18+, Python 3.11, Docker)\u003c/em>\u003c/li>\u003c/ul>\n\u003ch2>Install\u003c/h2>\n\u003cpre class=\"code\">\u003ccode data-lang=\"bash\"># Buddy will replace this with the real command from package.json / Makefile / etc.\u003c/code>\u003c/pre>\n\u003ch2>Run locally\u003c/h2>\n\u003cpre class=\"code\">\u003ccode data-lang=\"bash\"># Buddy will replace this with the real command.\u003c/code>\u003c/pre>\n\u003ch2>Run tests\u003c/h2>\n\u003cpre class=\"code\">\u003ccode data-lang=\"bash\"># Buddy will replace this with the real command.\u003c/code>\u003c/pre>\n\u003ch2>Common problems\u003c/h2>\n\u003cp>\u003cem>(Buddy will collect these as it learns from the repo and your questions.)\u003c/em>\u003c/p>\n\u003ch2>Where things live\u003c/h2>\n\u003cul>\u003cli>\u003cstrong>Logs:\u003c/strong>\u003c/li>\u003cli>\u003cstrong>Config:\u003c/strong>\u003c/li>\u003cli>\u003cstrong>Secrets / env vars:\u003c/strong>\u003c/li>\u003c/ul>"},{"id":"architecture","icon":"🏛️","title":"Architecture","source":"ARCHITECTURE.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Architecture\u003c/h1>\n\u003cblockquote>⚠️ This is an \u003cstrong>initial template\u003c/strong>. After Buddy scans the repo, sections here will be marked either \u003cstrong>Verified\u003c/strong> (read from code/docs) or \u003cstrong>Inferred\u003c/strong> (Buddy&#39;s best guess — double-check).\u003c/blockquote>\n\u003ch2>Big picture\u003c/h2>\n\u003cp>\u003cem>(One paragraph: what the system does, in plain words.)\u003c/em>\u003c/p>\n\u003ch2>Major components\u003c/h2>\n\u003ctable class=\"md-table\">\u003cthead>\u003ctr>\u003cth style=\"text-align:left\">Component\u003c/th>\u003cth style=\"text-align:left\">Where in the code\u003c/th>\u003cth style=\"text-align:left\">Responsibility\u003c/th>\u003c/tr>\u003c/thead>\u003ctbody>\u003ctr>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003c/tr>\u003c/tbody>\u003c/table>\n\u003ch2>Request / data flow\u003c/h2>\n\u003cp>\u003cem>(Describe a typical request from start to finish, end-to-end.)\u003c/em>\u003c/p>\n\u003col>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003cli>\u003cem>(tbd)\u003c/em>\u003c/li>\u003c/ol>\n\u003ch2>Key boundaries\u003c/h2>\n\u003cul>\u003cli>\u003cem>(What lives where; what depends on what.)\u003c/em>\u003c/li>\u003c/ul>"},{"id":"integrations","icon":"🔌","title":"Integrations","source":"INTEGRATIONS.md","hasContent":true,"summary":"| Service | What it's used for | Where configured |","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>External Integrations\u003c/h1>\n\u003cblockquote>Anything the project talks to: databases, queues, auth providers, third-party APIs.\u003c/blockquote>\n\u003ctable class=\"md-table\">\u003cthead>\u003ctr>\u003cth style=\"text-align:left\">Service\u003c/th>\u003cth style=\"text-align:left\">What it&#39;s used for\u003c/th>\u003cth style=\"text-align:left\">Where configured\u003c/th>\u003c/tr>\u003c/thead>\u003ctbody>\u003ctr>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003ctd style=\"text-align:left\">\u003cem>(tbd)\u003c/em>\u003c/td>\u003c/tr>\u003c/tbody>\u003c/table>\n\u003ch2>Secrets &amp; env vars\u003c/h2>\n\u003cul>\u003cli>\u003cem>(Where they live; never paste actual values here.)\u003c/em>\u003c/li>\u003c/ul>"},{"id":"links","icon":"🔗","title":"Curated Links","source":"LINKS.md","hasContent":true,"summary":"Add a link from the terminal:","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Important Links\u003c/h1>\n\u003cblockquote>External docs, design docs, runbooks, dashboards — anything a teammate would want to know about.\u003c/blockquote>\n\u003cp>Add a link from the terminal:\u003c/p>\n\u003cpre class=\"code\">\u003ccode data-lang=\"bash\">buddy link https://example.com/doc --title &quot;Payments design&quot; --tags architecture,payments --relevance must-read\u003c/code>\u003c/pre>\n\u003cp>Or ask Buddy in Copilot CLI: \u003cem>&quot;here&#39;s a link: https://… it&#39;s our oncall runbook.&quot;\u003c/em>\u003c/p>\n\u003cblockquote>⚠️ Buddy never reads the linked page. It only stores metadata. If you want a summary, paste the contents into the chat.\u003c/blockquote>\n\u003chr/>\n\u003ch2>Must-read\u003c/h2>\n\u003cp>\u003cem>(none yet)\u003c/em>\u003c/p>\n\u003ch2>Helpful\u003c/h2>\n\u003cp>\u003cem>(none yet)\u003c/em>\u003c/p>\n\u003ch2>Optional\u003c/h2>\n\u003cp>\u003cem>(none yet)\u003c/em>\u003c/p>"},{"id":"changelog","icon":"📜","title":"Recent Changes","source":"CHANGELOG_SUMMARY.md","hasContent":true,"summary":"(empty — no commits scanned yet)","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Recent Changes (Human-Friendly)\u003c/h1>\n\u003cblockquote>Buddy summarizes recent commits here in plain words. Updated when you run \u003ccode>buddy precheck\u003c/code> and ask Buddy to &quot;update buddy&quot;.\u003c/blockquote>\n\u003cp>\u003cem>(empty — no commits scanned yet)\u003c/em>\u003c/p>"},{"id":"starter","icon":"🎯","title":"Starter Tasks","source":"STARTER_TASKS.md","hasContent":true,"summary":"","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Starter Tasks\u003c/h1>\n\u003cblockquote>Friendly first things to try in this repo so you build confidence. Pick \u003cstrong>one\u003c/strong> and ship it — small wins beat big plans.\u003c/blockquote>\n\u003ch2>Warm-up (≈ 15 min)\u003c/h2>\n\u003cul>\u003cli>Run the project locally once. Follow \u003ccode>GETTING_STARTED.md\u003c/code> end-to-end and note any step that wasn&#39;t obvious.\u003c/li>\u003cli>Run the test suite once. If it fails, capture the error and ask in your team chat — that&#39;s a real first contribution.\u003c/li>\u003cli>Find one typo or unclear sentence in any \u003ccode>README\u003c/code> or \u003ccode>.buddy/*.md\u003c/code> and open a tiny PR fixing it.\u003c/li>\u003c/ul>\n\u003ch2>First real change (≈ 1–2 hrs)\u003c/h2>\n\u003cul>\u003cli>Pick a \u003cstrong>TODO\u003c/strong> or \u003cstrong>FIXME\u003c/strong> comment from the auto-detected list below and turn it into a small PR.\u003c/li>\u003cli>Add (or fix) \u003cstrong>one test\u003c/strong> for a function that doesn&#39;t have coverage yet.\u003c/li>\u003cli>Improve a log message or error message somewhere in the code — pick one that confused you the first time you read it.\u003c/li>\u003c/ul>\n\u003ch2>Learn the codebase by doing\u003c/h2>\n\u003cul>\u003cli>Trace a single user request from entry point → handler → response. Add a comment or doc explaining what you found.\u003c/li>\u003cli>Pick a folder from \u003ccode>MAP/repo_map.md\u003c/code> you don&#39;t understand, read it for 20 minutes, then add one sentence about it to the map.\u003c/li>\u003cli>Add an entry to \u003ccode>LINKS.md\u003c/code> for any internal doc your team relies on but isn&#39;t yet linked.\u003c/li>\u003c/ul>\n\u003ch2>Tips\u003c/h2>\n\u003cul>\u003cli>\u003cstrong>Ask early.\u003c/strong> If a task takes &gt;30 min just to understand, that itself is feedback worth sharing.\u003c/li>\u003cli>\u003cstrong>Tiny PRs win.\u003c/strong> A one-line fix you ship today is better than a refactor you ship next month.\u003c/li>\u003cli>\u003cstrong>Update Buddy.\u003c/strong> When you learn something new, add it to the matching \u003ccode>.buddy/*.md\u003c/code> doc so the next newcomer benefits.\u003c/li>\u003c/ul>\u003ch2>From the code\u003c/h2>\u003cp>No \u003ccode>TODO\u003c/code> / \u003ccode>FIXME\u003c/code> comments found. Nice and tidy! Pick a warm-up task above instead.\u003c/p>"},{"id":"questions","icon":"❓","title":"Open Questions","source":"NOTES/open_questions.md","hasContent":true,"summary":"(none yet)","html":"\u003cp>🏠 \u003ca href=\"#welcome\" data-tour-link=\"1\">Home\u003c/a> · \u003ca href=\"#getting\" data-tour-link=\"1\">Getting Started\u003c/a> · \u003ca href=\"#architecture\" data-tour-link=\"1\">Architecture\u003c/a> · \u003ca href=\"#tech\" data-tour-link=\"1\">Tech\u003c/a> · \u003ca href=\"#integrations\" data-tour-link=\"1\">Integrations\u003c/a> · \u003ca href=\"#map\" data-tour-link=\"1\">Repo Map\u003c/a> · \u003ca href=\"#links\" data-tour-link=\"1\">Links\u003c/a>\u003c/p>\n\u003chr/>\n\u003ch1>Open Questions\u003c/h1>\n\u003cblockquote>Things Buddy couldn&#39;t figure out from the repo alone. Help fill these in!\u003c/blockquote>\n\u003cp>\u003cem>(none yet)\u003c/em>\u003c/p>"}],"quiz":[{"q":"Which language is used in this repo?","choices":["C#","Go","Java","Rust"],"answer":1},{"q":"Which build or package tool is used here?","choices":["dotnet","make","yarn","gradle"],"answer":1},{"q":"Which of these is an actual component described in this repo's architecture?","choices":["Coffee-Powered Reactor","Unicorn Stable Manager","Big picture","Cookie Refrigeration Service"],"answer":2}],"links":[]}</script>
+<script>
+(function(){
+  const raw = document.getElementById('buddy-data').textContent;
+  const DATA = JSON.parse(raw);
+  const STORAGE_KEY = 'buddy-tour:' + (DATA.meta.repoName || 'repo');
+  const state = loadState();
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || { done: {}, quiz: null }; }
+    catch { return { done: {}, quiz: null }; }
+  }
+  function saveState() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {} }
+
+  const ALL_STEPS = DATA.sections.concat([
+    { id: '__quiz__', icon: '🎓', title: 'Graduation Quiz', isQuiz: true, hasContent: true },
+  ]);
+
+  document.getElementById('repoName').textContent = '📦 ' + (DATA.meta.repoName || 'repo');
+
+  const nav = document.getElementById('nav');
+  ALL_STEPS.forEach((s, idx) => {
+    const b = document.createElement('button');
+    b.dataset.id = s.id;
+    b.innerHTML = '<span>' + s.icon + '</span><span>' + (idx + 1) + '. ' + escapeHtml(s.title) + '</span>'
+      + (s.hasContent ? '' : '<span class="empty-tag">empty</span>')
+      + '<span class="check">✓</span>';
+    b.onclick = () => navigate(s.id);
+    nav.appendChild(b);
+  });
+
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function refreshNav() {
+    const total = ALL_STEPS.length;
+    let done = 0;
+    Array.from(nav.children).forEach((btn) => {
+      const id = btn.dataset.id;
+      if (state.done[id]) { btn.classList.add('done'); done++; }
+      else btn.classList.remove('done');
+      btn.classList.toggle('active', id === currentId);
+    });
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    document.getElementById('xpBar').style.width = pct + '%';
+    document.getElementById('xpText').textContent =
+      done + ' / ' + total + ' steps complete  •  ' + pct + ' XP';
+  }
+
+  let currentId = ALL_STEPS[0].id;
+  function navigate(id) {
+    currentId = id;
+    if (id === '__quiz__') renderQuiz();
+    else renderSection(DATA.sections.find((x) => x.id === id));
+    refreshNav();
+    history.replaceState(null, '', '#' + id);
+  }
+
+  function markDone(id) { state.done[id] = true; saveState(); refreshNav(); }
+
+  function renderSection(s) {
+    const idx = ALL_STEPS.findIndex((x) => x.id === s.id);
+    const next = ALL_STEPS[idx + 1];
+    const main = document.getElementById('main');
+
+    // Special, more visual rendering for the Curated Links page.
+    let body;
+    if (s.id === 'links' && Array.isArray(DATA.links) && DATA.links.length) {
+      body = renderLinksGrid(DATA.links);
+    } else if (s.hasContent) {
+      body = '<div class="content">' + s.html + '</div>';
+    } else {
+      body = '<div class="empty"><strong>This section is empty.</strong> Ask Buddy in your CLI: '
+           + '<code>"Scan this repo and fill in .buddy/' + escapeHtml(s.source) + '"</code>.</div>';
+    }
+
+    main.innerHTML =
+      '<div class="crumb">Step ' + (idx + 1) + ' of ' + ALL_STEPS.length + '</div>'
+      + '<h1 class="pageTitle"><span class="icon">' + s.icon + '</span>'
+      + escapeHtml(s.title) + '</h1>'
+      + (s.summary ? '<div class="tldr"><div class="label">In one line</div>' + escapeHtml(s.summary) + '</div>' : '')
+      + '<div class="src-link">📖 Source: <code>.buddy/' + escapeHtml(s.source) + '</code></div>'
+      + body
+      + '<div class="actions">'
+      + '<button class="btn" id="btnDone">' + (state.done[s.id] ? '✓ Marked complete' : 'Mark complete & continue') + '</button>'
+      + (next ? '<button class="btn ghost" id="btnNext">Next: ' + escapeHtml(next.title) + ' →</button>' : '')
+      + '</div>'
+      + '<div class="footer">Generated ' + new Date(DATA.meta.generatedAt).toLocaleString()
+      + (DATA.meta.lastIndexedCommit ? ' • Indexed commit ' + DATA.meta.lastIndexedCommit.slice(0,8) : '')
+      + '</div>';
+
+    document.getElementById('btnDone').onclick = function(){
+      markDone(s.id);
+      if (next) navigate(next.id);
+    };
+    if (next) document.getElementById('btnNext').onclick = function(){
+      markDone(s.id); navigate(next.id);
+    };
+    accordionizeContent(main);
+    addCopyButtons(main);
+    wireInternalLinks(main);
+  }
+
+  // Track scroll listener cleanup so navigating between sidebar sections
+  // doesn't leave stale handlers attached to detached DOM.
+  let scrollCleanup = null;
+
+  function renderLinksGrid(links) {
+    const cards = links.map((l) => {
+      const tagPills = (l.tags || []).map((t) =>
+        '<span class="pill">' + escapeHtml(t) + '</span>').join('');
+      const relPill = '<span class="pill ' + (l.relevance === 'must-read' ? 'must' :
+        l.relevance === 'optional' ? 'optional' : '') + '">'
+        + escapeHtml(l.relevance || 'helpful') + '</span>';
+      const safeUrl = /^(https?:|mailto:)/i.test(l.url || '') ? l.url : '#';
+      return '<a class="link-card" href="' + escapeHtml(safeUrl) + '" target="_blank" rel="noopener">'
+        + '<div class="title">🔗 ' + escapeHtml(l.title) + '</div>'
+        + (l.description ? '<div class="desc">' + escapeHtml(l.description) + '</div>' : '')
+        + '<div class="meta">' + relPill + tagPills + '</div>'
+        + '</a>';
+    }).join('');
+    return '<div class="link-grid">' + cards + '</div>';
+  }
+
+  // Wrap H2 sections of rendered markdown into <details> accordions.
+  // First accordion is open by default so the page never looks empty.
+  function accordionizeContent(root) {
+    const content = root.querySelector('.content');
+    if (!content) return;
+    const children = Array.from(content.children);
+    if (children.filter((c) => c.tagName === 'H2').length < 2) return;
+    // Unique group name so opening one card auto-closes its siblings
+    // (native exclusive-accordion behavior in modern browsers).
+    const groupName = 'acc-' + Math.random().toString(36).slice(2, 9);
+    const frag = document.createDocumentFragment();
+    const detailsList = [];
+    let bucket = null;
+    let firstOpen = true;
+    for (const el of children) {
+      if (el.tagName === 'H2') {
+        const det = document.createElement('details');
+        det.name = groupName;
+        if (firstOpen) { det.open = true; firstOpen = false; }
+        const sum = document.createElement('summary');
+        sum.innerHTML = el.innerHTML;
+        const accBody = document.createElement('div');
+        accBody.className = 'acc-body';
+        det.appendChild(sum);
+        det.appendChild(accBody);
+        frag.appendChild(det);
+        detailsList.push(det);
+        bucket = accBody;
+      } else if (bucket) {
+        bucket.appendChild(el);
+      } else {
+        frag.appendChild(el);
+      }
+    }
+    content.innerHTML = '';
+    content.appendChild(frag);
+    // Fallback for browsers without exclusive <details name=...> support.
+    detailsList.forEach((d) => {
+      d.addEventListener('toggle', () => {
+        if (!d.open) return;
+        detailsList.forEach((o) => { if (o !== d && o.open) o.open = false; });
+      });
+    });
+    // Auto-open the section the user scrolls to. Driven by real scroll
+    // events (not IntersectionObserver), so layout shifts caused by
+    // opening a card do not re-trigger and fight the user's clicks.
+    if (scrollCleanup) { scrollCleanup(); scrollCleanup = null; }
+    let userClickLock = 0;
+    let lastAdvanceAt = 0;
+    let wheelAccum = 0;
+    detailsList.forEach((d) => {
+      const sum = d.querySelector('summary');
+      if (sum) {
+        sum.addEventListener('click', () => {
+          // Briefly ignore scroll-driven auto-open after a manual click,
+          // so the user's choice sticks even if the page reflows.
+          userClickLock = Date.now() + 800;
+          wheelAccum = 0;
+        });
+      }
+    });
+    function handoff(dir) {
+      const now = Date.now();
+      if (now < userClickLock) return;
+      if (now - lastAdvanceAt < 250) return;
+      const openIdx = detailsList.findIndex((d) => d.open);
+      if (openIdx === -1) { detailsList[0].open = true; return; }
+      if (dir > 0) {
+        const next = detailsList[openIdx + 1];
+        if (next) { next.open = true; lastAdvanceAt = now; }
+      } else if (dir < 0) {
+        const prev = detailsList[openIdx - 1];
+        if (prev) { prev.open = true; lastAdvanceAt = now; }
+      }
+    }
+    function onWheel(e) {
+      // Wheel events fire even when the page is not scrollable, so this is
+      // the most reliable signal. Accumulate deltaY and hand off when it
+      // crosses a threshold — this also debounces trackpad inertia.
+      wheelAccum += e.deltaY;
+      if (Math.abs(wheelAccum) >= 80) {
+        const dir = wheelAccum > 0 ? 1 : -1;
+        wheelAccum = 0;
+        handoff(dir);
+      }
+    }
+    function onKey(e) {
+      if (['ArrowDown','PageDown','End',' '].includes(e.key)) handoff(1);
+      else if (['ArrowUp','PageUp','Home'].includes(e.key)) handoff(-1);
+    }
+    // Also keep a scroll-based path: on scrollable pages, when the open
+    // card's body scrolls out of view, advance. This complements wheel
+    // accumulation for users who scroll via scrollbar / middle-click.
+    let prevScrollY = window.scrollY;
+    function onScroll() {
+      const y = window.scrollY;
+      const dy = y - prevScrollY;
+      prevScrollY = y;
+      if (Date.now() < userClickLock) return;
+      if (Date.now() - lastAdvanceAt < 250) return;
+      const openIdx = detailsList.findIndex((d) => d.open);
+      if (openIdx === -1) return;
+      const open = detailsList[openIdx];
+      const r = open.getBoundingClientRect();
+      const vh = window.innerHeight;
+      if (dy > 0) {
+        const next = detailsList[openIdx + 1];
+        if (next && r.bottom < vh * 0.35) handoff(1);
+      } else if (dy < 0) {
+        const prev = detailsList[openIdx - 1];
+        if (prev && r.top > vh * 0.55) handoff(-1);
+      }
+    }
+    const targets = [window, document, document.documentElement, document.body];
+    targets.forEach((t) => t.addEventListener('scroll', onScroll, { passive: true }));
+    window.addEventListener('wheel', onWheel, { passive: true });
+    window.addEventListener('keydown', onKey);
+    scrollCleanup = () => {
+      targets.forEach((t) => t.removeEventListener('scroll', onScroll));
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKey);
+    };
+  }
+
+  function wireInternalLinks(root) {
+    root.querySelectorAll('a[data-tour-link="1"]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        const id = (a.getAttribute('href') || '').replace('#', '');
+        if (id) navigate(id);
+      });
+    });
+  }
+
+  function addCopyButtons(root) {
+    root.querySelectorAll('pre.code').forEach((pre) => {
+      if (pre.querySelector('.copy')) return;
+      const btn = document.createElement('button');
+      btn.className = 'copy';
+      btn.textContent = 'Copy';
+      btn.onclick = () => {
+        const txt = pre.querySelector('code').innerText;
+        navigator.clipboard?.writeText(txt);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+      };
+      pre.appendChild(btn);
+    });
+  }
+
+  function renderQuiz() {
+    const main = document.getElementById('main');
+    state.quiz = state.quiz || { answers: {} };
+    let html = '<div class="crumb">Final step</div>'
+      + '<h1 class="pageTitle"><span class="icon">🎓</span>Graduation Quiz</h1>'
+      + '<div class="summary">Answer a few quick questions to earn your Buddy Graduate badge.</div>';
+    DATA.quiz.forEach((q, qi) => {
+      html += '<div class="quiz-q" data-qi="' + qi + '"><div class="q">'
+        + (qi + 1) + '. ' + escapeHtml(q.q) + '</div>';
+      q.choices.forEach((c, ci) => {
+        html += '<button class="opt" data-ci="' + ci + '">' + escapeHtml(c) + '</button>';
+      });
+      html += '</div>';
+    });
+    html += '<div class="quiz-score" id="score"></div>';
+    html += '<div class="actions"><button class="btn warm" id="btnFinish">Finish & earn badge 🎉</button></div>';
+    main.innerHTML = html;
+
+    main.querySelectorAll('.quiz-q').forEach((qEl) => {
+      const qi = +qEl.dataset.qi;
+      qEl.querySelectorAll('.opt').forEach((opt) => {
+        opt.onclick = () => {
+          const ci = +opt.dataset.ci;
+          state.quiz.answers[qi] = ci;
+          saveState();
+          qEl.querySelectorAll('.opt').forEach((o) => o.classList.remove('right','wrong'));
+          opt.classList.add(ci === DATA.quiz[qi].answer ? 'right' : 'wrong');
+          if (ci !== DATA.quiz[qi].answer) {
+            const correct = qEl.querySelectorAll('.opt')[DATA.quiz[qi].answer];
+            if (correct) correct.classList.add('right');
+          }
+          updateScore();
+        };
+        // Restore prior selection
+        if (state.quiz.answers[qi] === +opt.dataset.ci) opt.click();
+      });
+    });
+    function updateScore() {
+      let correct = 0;
+      DATA.quiz.forEach((q, i) => { if (state.quiz.answers[i] === q.answer) correct++; });
+      document.getElementById('score').textContent =
+        'Score: ' + correct + ' / ' + DATA.quiz.length
+        + (correct === DATA.quiz.length ? '  🌟 Perfect!' : '');
+    }
+    updateScore();
+    document.getElementById('btnFinish').onclick = () => {
+      markDone('__quiz__');
+      alert('🎉 You finished the Buddy Tour!\nYou are ready to ship your first contribution.');
+    };
+  }
+
+  // Search across all sections.
+  document.getElementById('search').addEventListener('input', (e) => {
+    const term = e.target.value.trim().toLowerCase();
+    if (!term) { navigate(currentId); return; }
+    const main = document.getElementById('main');
+    const hits = [];
+    DATA.sections.forEach((s) => {
+      const txt = (s.title + ' ' + s.summary + ' ' + s.html).toLowerCase();
+      if (txt.includes(term)) hits.push(s);
+    });
+    main.innerHTML = '<h1 class="pageTitle"><span class="icon">🔎</span>Search: ' + escapeHtml(term) + '</h1>'
+      + '<div class="search-hits">' + hits.length + ' section(s) match.</div>'
+      + hits.map((s) => '<div class="quiz-q" style="cursor:pointer" data-id="' + s.id + '">'
+        + '<div class="q">' + s.icon + ' ' + escapeHtml(s.title) + '</div>'
+        + '<div style="color:var(--muted);font-size:13px">' + escapeHtml(s.summary || '(open to view)') + '</div></div>').join('');
+    main.querySelectorAll('[data-id]').forEach((el) => {
+      el.onclick = () => { document.getElementById('search').value = ''; navigate(el.dataset.id); };
+    });
+  });
+
+  // Start: honor URL hash if present.
+  const hash = (location.hash || '').replace('#','');
+  const start = ALL_STEPS.find((s) => s.id === hash) ? hash : ALL_STEPS[0].id;
+  navigate(start);
+})();
+</script>
+</body>
+</html>

@@ -133,7 +133,12 @@ quizhub/
 │   │   ├── db.go               # SQLite: migrations, room code, players, questions, answers
 │   │   └── db_test.go          # Database unit tests
 │   ├── handlers/
-│   │   ├── handlers.go         # HTTP handlers: room, join, game, admin, questions
+│   │   ├── handler.go          # Handler construction and route registration
+│   │   ├── auth.go             # Admin auth, tokens, and rate limiting
+│   │   ├── room.go             # Health, room, player, join, and WebSocket endpoints
+│   │   ├── game.go             # Game state, answers, timers, scoring, and progression
+│   │   ├── questions.go        # Question CRUD and selection
+│   │   ├── response.go         # JSON response helpers
 │   │   └── handlers_test.go    # Handler unit tests
 │   ├── middleware/
 │   │   └── middleware.go       # CORS, logging, recovery, security headers, WebSocket support
@@ -398,11 +403,11 @@ docker compose up -d
 | Correct answer in 0.3s (on 15s timer) | ~980 pts |
 | Correct answer in 5s (on 15s timer) | ~667 pts |
 | Correct answer in 14s (on 15s timer) | ~67 pts |
-| Correct answer after timer (edge case) | 10 pts |
+| Correct answer after timer | Rejected |
 | Wrong answer | 0 pts |
 | No answer (timeout) | 0 pts |
 
-Formula: `score = 1000 × (time_remaining_ms / total_time_ms)` (minimum 10 for correct).
+Formula: `score = 1000 × (time_remaining_ms / total_time_ms)`, rounded to the nearest point.
 
 ---
 
@@ -442,14 +447,14 @@ curl -X POST /api/admin/auth \
 | `POST` | `/api/admin/timer` | Set timer (5-120s) | `{"time_limit":20}` |
 | `POST` | `/api/room/create` | Create quiz room | — → `{"room_code":"A3X7K2","link":"..."}` |
 | `POST` | `/api/game/start` | Start game (10s countdown) | — |
-| `POST` | `/api/game/next` | Next question (reveal state only) | — |
+| `POST` | `/api/game/next` | Advance from reveal to next question, or finish after the last question | — |
 | `POST` | `/api/game/reset` | Reset everything | — |
 
 ### WebSocket
 
 ```
 ws://localhost:8080/api/ws?role=player&player_id=abc-123
-ws://localhost:8080/api/ws?role=admin
+ws://localhost:8080/api/ws?role=admin&admin_token=TOKEN
 ```
 
 ---
@@ -468,8 +473,7 @@ Events are JSON: `{"event":"name","data":{...}}`
 | `game_reset` | Game reset to fresh state | All |
 | `player_joined` | New player joined room | All |
 | `players_update` | Full player list refresh | All |
-| `player_answered` | Answer stats update | Admin only |
-| `player_kicked` | Player removed | Kicked player |
+| `player_answered` | Answer stats update | All clients; admin UI displays it |
 | `leaderboard_update` | Rankings changed | All |
 
 ---

@@ -88,7 +88,8 @@ func (d *DB) migrate() error {
 			current_question_id INTEGER,
 			question_index INTEGER NOT NULL DEFAULT 0,
 			question_started_at TEXT,
-			time_limit INTEGER NOT NULL DEFAULT 15
+			time_limit INTEGER NOT NULL DEFAULT 15,
+			question_ids TEXT NOT NULL DEFAULT '[]'
 		)`,
 	}
 
@@ -98,11 +99,43 @@ func (d *DB) migrate() error {
 		}
 	}
 
-	// Add room_code column if missing (migration for existing DBs)
-	d.conn.Exec("ALTER TABLE game_state ADD COLUMN room_code TEXT")
+	if err := d.addColumnIfMissing("game_state", "room_code", "room_code TEXT"); err != nil {
+		return err
+	}
+	if err := d.addColumnIfMissing("game_state", "question_ids", "question_ids TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
 
 	// Ensure game_state row exists
+	if _, err := d.conn.Exec("PRAGMA user_version = 2"); err != nil {
+		return err
+	}
 	_, err := d.conn.Exec(`INSERT OR IGNORE INTO game_state (id, status) VALUES (1, 'lobby')`)
+	return err
+}
+
+func (d *DB) addColumnIfMissing(table, column, definition string) error {
+	rows, err := d.conn.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = d.conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + definition)
 	return err
 }
 
@@ -322,6 +355,12 @@ func (d *DB) SetGameState(status string, questionID, questionIndex int, startedA
 	return err
 }
 
+// SetTimeLimit stores the configured question duration for the next game.
+func (d *DB) SetTimeLimit(timeLimit int) error {
+	_, err := d.conn.Exec("UPDATE game_state SET time_limit = ? WHERE id = 1", timeLimit)
+	return err
+}
+
 // SetRoomCode sets the room code.
 func (d *DB) SetRoomCode(code string) error {
 	_, err := d.conn.Exec("UPDATE game_state SET room_code = ? WHERE id = 1", code)
@@ -337,18 +376,23 @@ func (d *DB) GetRoomCode() string {
 
 // ResetGame clears all players, answers, questions, and resets game state.
 func (d *DB) ResetGame() error {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	stmts := []string{
 		"DELETE FROM answers",
 		"DELETE FROM players",
 		"DELETE FROM questions",
-		"UPDATE game_state SET status = 'lobby', room_code = NULL, current_question_id = NULL, question_index = 0, question_started_at = NULL WHERE id = 1",
+		"UPDATE game_state SET status = 'lobby', room_code = NULL, current_question_id = NULL, question_index = 0, question_started_at = NULL, question_ids = '[]' WHERE id = 1",
 	}
 	for _, s := range stmts {
-		if _, err := d.conn.Exec(s); err != nil {
+		if _, err := tx.Exec(s); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // AddQuestion inserts a custom question.
@@ -378,92 +422,6 @@ func (d *DB) DeleteQuestion(id int) error {
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		return fmt.Errorf("question not found")
-	}
-	return nil
-}
-
-// UpdateQuestion updates an existing question.
-func (d *DB) UpdateQuestion(id int, text string, options []string, answer int, category string) error {
-	optsJSON, _ := json.Marshal(options)
-	category = strings.TrimSpace(category)
-	if category == "" {
-		category = "general"
-	}
-	res, err := d.conn.Exec(
-		"UPDATE questions SET text = ?, options = ?, answer = ?, category = ? WHERE id = ?",
-		text, string(optsJSON), answer, category, id,
-	)
-	if err != nil {
-		return err
-	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		return fmt.Errorf("question not found")
-	}
-	return nil
-}
-
-// GetCategories returns distinct question categories.
-func (d *DB) GetCategories() ([]string, error) {
-	rows, err := d.conn.Query("SELECT DISTINCT category FROM questions ORDER BY category")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var cats []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		cats = append(cats, c)
-	}
-	if cats == nil {
-		cats = []string{}
-	}
-	return cats, rows.Err()
-}
-
-// GetQuestionIDsByCategories returns question IDs filtered by categories in random order.
-func (d *DB) GetQuestionIDsByCategories(categories []string) ([]int, error) {
-	if len(categories) == 0 {
-		return d.GetQuestionIDs()
-	}
-	placeholders := ""
-	args := make([]interface{}, len(categories))
-	for i, c := range categories {
-		if i > 0 {
-			placeholders += ","
-		}
-		placeholders += "?"
-		args[i] = c
-	}
-	rows, err := d.conn.Query("SELECT id FROM questions WHERE category IN ("+placeholders+") ORDER BY RANDOM()", args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// DeletePlayer removes a player and their answers.
-func (d *DB) DeletePlayer(id string) error {
-	d.conn.Exec("DELETE FROM answers WHERE player_id = ?", id)
-	res, err := d.conn.Exec("DELETE FROM players WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		return fmt.Errorf("player not found")
 	}
 	return nil
 }
@@ -501,11 +459,6 @@ func (d *DB) ListAllQuestions() ([]models.Question, error) {
 	return questions, rows.Err()
 }
 
-// Conn exposes the raw connection for testing.
-func (d *DB) Conn() *sql.DB {
-	return d.conn
-}
-
 // CreateRoom stores/updates the active room code and resets to lobby state.
 func (d *DB) CreateRoom(code string) error {
 	status, _, _, _, timeLimit, _, err := d.GetGameState()
@@ -520,7 +473,8 @@ func (d *DB) CreateRoom(code string) error {
 			return err
 		}
 	}
-	return d.SetRoomCode(code)
+	_, err = d.conn.Exec("UPDATE game_state SET room_code = ?, question_ids = '[]' WHERE id = 1", code)
+	return err
 }
 
 func (d *DB) ListQuestions() ([]models.Question, error) { return d.ListAllQuestions() }
@@ -536,19 +490,52 @@ func (d *DB) StartGame(ids []int) error {
 	if err != nil {
 		return err
 	}
-	if status == "question" {
+	if status != "lobby" {
 		return fmt.Errorf("game already active")
 	}
-	return d.SetGameState("question", ids[0], 0, time.Now().UTC().Format(time.RFC3339), timeLimit)
+	idsJSON, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = d.conn.Exec(
+		"UPDATE game_state SET status = 'countdown', current_question_id = ?, question_index = 0, question_started_at = NULL, time_limit = ?, question_ids = ? WHERE id = 1",
+		ids[0], timeLimit, string(idsJSON),
+	)
+	return err
 }
 
-// NextQuestion advances to next available question ID order by id.
+// BeginCurrentQuestion marks the current question as active and starts its timer.
+func (d *DB) BeginCurrentQuestion() error {
+	_, qID, qIdx, _, timeLimit, _, err := d.GetGameState()
+	if err != nil {
+		return err
+	}
+	if qID == 0 {
+		return fmt.Errorf("no current question")
+	}
+	return d.SetGameState("question", qID, qIdx, time.Now().UTC().Format(time.RFC3339), timeLimit)
+}
+
+// ActiveQuestionIDs returns the persisted question order for the active game.
+func (d *DB) ActiveQuestionIDs() ([]int, error) {
+	var raw string
+	if err := d.conn.QueryRow("SELECT COALESCE(question_ids, '[]') FROM game_state WHERE id = 1").Scan(&raw); err != nil {
+		return nil, err
+	}
+	var ids []int
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// NextQuestion advances through the persisted selected question order.
 func (d *DB) NextQuestion() (bool, error) {
 	_, qID, qIdx, _, timeLimit, _, err := d.GetGameState()
 	if err != nil {
 		return false, err
 	}
-	ids, err := d.GetQuestionIDs()
+	ids, err := d.ActiveQuestionIDs()
 	if err != nil {
 		return false, err
 	}
@@ -566,19 +553,36 @@ func (d *DB) NextQuestion() (bool, error) {
 	return true, err
 }
 
-func (d *DB) SubmitAnswer(playerID string, questionID int, correct bool) error {
-	score := 0
-	if correct {
-		score = 100
-	}
-	_, err := d.RecordAnswer(playerID, questionID, -1, correct, score)
+func (d *DB) SubmitAnswer(playerID string, questionID, selected int, correct bool, score int) (bool, error) {
+	tx, err := d.conn.Begin()
 	if err != nil {
-		return err
+		return false, err
+	}
+	defer tx.Rollback()
+
+	correctInt := 0
+	if correct {
+		correctInt = 1
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := tx.Exec(
+		`INSERT OR IGNORE INTO answers (player_id, question_id, selected, correct, score_earned, answered_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		playerID, questionID, selected, correctInt, score, now,
+	)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return false, tx.Commit()
 	}
 	if score > 0 {
-		return d.UpdatePlayerScore(playerID, score)
+		if _, err := tx.Exec("UPDATE players SET score = score + ? WHERE id = ?", score, playerID); err != nil {
+			return false, err
+		}
 	}
-	return nil
+	return true, tx.Commit()
 }
 
 func init() {

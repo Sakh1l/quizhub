@@ -11,7 +11,7 @@ import (
 	"github.com/sakh1l/quizhub/internal/ws"
 )
 
-func newMux(t *testing.T) *http.ServeMux {
+func newTestHandler(t *testing.T) (*http.ServeMux, *Handler) {
 	t.Helper()
 	database, err := db.New(":memory:")
 	if err != nil {
@@ -19,8 +19,15 @@ func newMux(t *testing.T) *http.ServeMux {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	h := New(database, ws.NewHub())
+	t.Cleanup(h.stopTimer)
 	mux := http.NewServeMux()
 	h.Register(mux)
+	return mux, h
+}
+
+func newMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	mux, _ := newTestHandler(t)
 	return mux
 }
 
@@ -166,5 +173,199 @@ func TestResetGameClearsSessionData(t *testing.T) {
 	w = reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected cleared selected question cache, start status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestTimerUsesTimeLimitPayloadAndValidatesBounds(t *testing.T) {
+	mux := newMux(t)
+	tok := adminToken(t, mux)
+
+	w := reqJSON(mux, http.MethodPost, "/api/admin/timer", map[string]int{"time_limit": 20}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("set timer status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]int
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode timer response: %v", err)
+	}
+	if resp["time_limit"] != 20 {
+		t.Fatalf("expected time_limit 20, got %d", resp["time_limit"])
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/admin/timer", map[string]int{"time_limit": 4}, tok)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request for short timer, got %d", w.Code)
+	}
+}
+
+func TestAnswerPayloadAndTimeBasedScoring(t *testing.T) {
+	mux, h := newTestHandler(t)
+	tok := adminToken(t, mux)
+
+	qID := addQuestion(t, mux, tok, "2+2?", []string{"1", "2", "4", "8"}, 2)
+	selectQuestions(t, mux, tok, []int{qID})
+	code := createRoom(t, mux, tok)
+	player := joinPlayer(t, mux, code, "Alice")
+
+	w := reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", w.Code, w.Body.String())
+	}
+	h.stopTimer()
+	h.beginQuestion()
+
+	w = reqJSON(mux, http.MethodPost, "/api/answer", map[string]any{
+		"player_id":   player.PlayerID,
+		"question_id": qID,
+		"answer":      2,
+	}, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("answer status=%d body=%s", w.Code, w.Body.String())
+	}
+	var answer struct {
+		Correct       bool `json:"correct"`
+		CorrectAnswer int  `json:"correct_answer"`
+		ScoreEarned   int  `json:"score_earned"`
+		TotalScore    int  `json:"total_score"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if !answer.Correct || answer.CorrectAnswer != 2 {
+		t.Fatalf("unexpected answer response: %+v", answer)
+	}
+	if answer.ScoreEarned <= 0 || answer.ScoreEarned > 1000 || answer.TotalScore != answer.ScoreEarned {
+		t.Fatalf("unexpected score response: %+v", answer)
+	}
+}
+
+func TestSelectedQuestionOrderAndRevealState(t *testing.T) {
+	mux, h := newTestHandler(t)
+	tok := adminToken(t, mux)
+
+	first := addQuestion(t, mux, tok, "First?", []string{"A", "B"}, 0)
+	second := addQuestion(t, mux, tok, "Second?", []string{"A", "B"}, 1)
+	third := addQuestion(t, mux, tok, "Third?", []string{"A", "B"}, 0)
+	selectQuestions(t, mux, tok, []int{second, first})
+	code := createRoom(t, mux, tok)
+	_ = joinPlayer(t, mux, code, "Bob")
+
+	w := reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", w.Code, w.Body.String())
+	}
+	h.stopTimer()
+	h.beginQuestion()
+	assertCurrentQuestion(t, mux, second)
+
+	h.revealCurrentQuestion()
+	w = reqJSON(mux, http.MethodGet, "/api/game/state", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("state status=%d body=%s", w.Code, w.Body.String())
+	}
+	var state struct {
+		Status        string `json:"status"`
+		CorrectAnswer int    `json:"correct_answer"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if state.Status != "reveal" || state.CorrectAnswer != 1 {
+		t.Fatalf("expected reveal with correct answer 1, got %+v", state)
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/game/next", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("next status=%d body=%s", w.Code, w.Body.String())
+	}
+	assertCurrentQuestion(t, mux, first)
+
+	w = reqJSON(mux, http.MethodPost, "/api/game/next", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("finish status=%d body=%s", w.Code, w.Body.String())
+	}
+	status, current, _, _, _, _, _ := h.DB.GetGameState()
+	if status != "finished" || current != first || current == third {
+		t.Fatalf("unexpected final state status=%s current=%d third=%d", status, current, third)
+	}
+}
+
+type joinedPlayer struct {
+	PlayerID string `json:"player_id"`
+}
+
+func addQuestion(t *testing.T, mux *http.ServeMux, token, text string, options []string, answer int) int {
+	t.Helper()
+	w := reqJSON(mux, http.MethodPost, "/api/questions/add", map[string]any{
+		"text": text, "options": options, "answer": answer, "category": "test",
+	}, token)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add question status=%d body=%s", w.Code, w.Body.String())
+	}
+	var q struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &q); err != nil {
+		t.Fatalf("decode question: %v", err)
+	}
+	return q.ID
+}
+
+func selectQuestions(t *testing.T, mux *http.ServeMux, token string, ids []int) {
+	t.Helper()
+	w := reqJSON(mux, http.MethodPost, "/api/questions", map[string]any{"ids": ids}, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("select questions status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func createRoom(t *testing.T, mux *http.ServeMux, token string) string {
+	t.Helper()
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", nil, token)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create room status=%d body=%s", w.Code, w.Body.String())
+	}
+	var room map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &room); err != nil {
+		t.Fatalf("decode room: %v", err)
+	}
+	if room["room_code"] == "" || room["link"] == "" {
+		t.Fatalf("expected room_code and link, got %+v", room)
+	}
+	return room["room_code"]
+}
+
+func joinPlayer(t *testing.T, mux *http.ServeMux, code, nickname string) joinedPlayer {
+	t.Helper()
+	w := reqJSON(mux, http.MethodPost, "/api/join", map[string]string{"nickname": nickname, "room_code": code}, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("join status=%d body=%s", w.Code, w.Body.String())
+	}
+	var player joinedPlayer
+	if err := json.Unmarshal(w.Body.Bytes(), &player); err != nil {
+		t.Fatalf("decode player: %v", err)
+	}
+	if player.PlayerID == "" {
+		t.Fatal("expected player_id")
+	}
+	return player
+}
+
+func assertCurrentQuestion(t *testing.T, mux *http.ServeMux, wantID int) {
+	t.Helper()
+	w := reqJSON(mux, http.MethodGet, "/api/game/state", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("state status=%d body=%s", w.Code, w.Body.String())
+	}
+	var state struct {
+		CurrentQuestion struct {
+			ID int `json:"id"`
+		} `json:"current_question"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if state.CurrentQuestion.ID != wantID {
+		t.Fatalf("current question id=%d, want %d", state.CurrentQuestion.ID, wantID)
 	}
 }

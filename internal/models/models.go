@@ -27,18 +27,6 @@ type QuestionOut struct {
 	Category string   `json:"category"`
 }
 
-// JoinRequest is the body for POST /api/join.
-type JoinRequest struct {
-	Nickname string `json:"nickname"`
-}
-
-// AnswerRequest is the body for POST /api/answer.
-type AnswerRequest struct {
-	PlayerID   string `json:"player_id"`
-	QuestionID int    `json:"question_id"`
-	Answer     int    `json:"answer"`
-}
-
 // AnswerResponse is returned after submitting an answer.
 type AnswerResponse struct {
 	Correct       bool `json:"correct"`
@@ -76,47 +64,4 @@ type HealthResponse struct {
 	Status      string `json:"status"`
 	Version     string `json:"version"`
 	PlayerCount int    `json:"player_count"`
-}
-
-// AdminAuthRequest is the body for POST /api/admin/auth.
-type AdminAuthRequest struct {
-	PIN string `json:"pin"`
-}
-
-// AdminAuthResponse is returned after successful admin auth.
-type AdminAuthResponse struct {
-	Token string `json:"token"`
-}
-
-// KickRequest is the body for POST /api/admin/kick.
-type KickRequest struct {
-	PlayerID string `json:"player_id"`
-}
-
-// TimerConfigRequest is the body for POST /api/admin/timer.
-type TimerConfigRequest struct {
-	TimeLimit int `json:"time_limit"`
-}
-
-// EditQuestionRequest is the body for PUT /api/admin/questions.
-type EditQuestionRequest struct {
-	ID       int      `json:"id"`
-	Text     string   `json:"text"`
-	Options  []string `json:"options"`
-	Answer   int      `json:"answer"`
-	Category string   `json:"category"`
-}
-
-// AnswerStats tracks answer distribution for admin view.
-type AnswerStats struct {
-	QuestionID   int `json:"question_id"`
-	TotalAnswers int `json:"total_answers"`
-	CorrectCount int `json:"correct_count"`
-	WrongCount   int `json:"wrong_count"`
-}
-
-// GameConfig holds configurable game settings.
-type GameConfig struct {
-	TimeLimit  int      `json:"time_limit"`
-	Categories []string `json:"categories,omitempty"`
 }
