@@ -1,0 +1,25 @@
+services:
+  quizhub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: quizhub
+    ports:
+      - "8080:8080"
+    environment:
+      QUIZHUB_PORT: "8080"
+      QUIZHUB_DB: /app/data/quizhub.db
+      QUIZHUB_ADMIN_PIN: "1234"
+    volumes:
+      - quizhub-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  quizhub-data:
