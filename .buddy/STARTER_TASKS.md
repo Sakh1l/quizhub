@@ -4,28 +4,64 @@
 
 # Starter Tasks
 
-> Friendly first things to try in this repo so you build confidence. Pick **one** and ship it — small wins beat big plans.
+Short, safe tasks for your first contributions. Pick one. Do it. Open a small PR.
 
-## Warm-up (≈ 15 min)
+## Quick wins (10–30 minutes)
 
-- Run the project locally once. Follow `GETTING_STARTED.md` end-to-end and note any step that wasn't obvious.
-- Run the test suite once. If it fails, capture the error and ask in your team chat — that's a real first contribution.
-- Find one typo or unclear sentence in any `README` or `.buddy/*.md` and open a tiny PR fixing it.
+- Run the app locally:
+  - `make build` then `./quizhub` or `make run`.
+  - Open http://localhost:8080 and http://localhost:8080/admin.html (PIN: 1234).
+  - File to check: cmd/server/main.go
 
-## First real change (≈ 1–2 hrs)
+- Run tests:
+  - `make test`
+  - If a test fails, copy the failing output and open an issue or PR that fixes a small cause.
+  - Files to check: internal/db/db_test.go, internal/handlers/handlers_test.go
 
-- Pick a **TODO** or **FIXME** comment from the auto-detected list below and turn it into a small PR.
-- Add (or fix) **one test** for a function that doesn't have coverage yet.
-- Improve a log message or error message somewhere in the code — pick one that confused you the first time you read it.
+- Fix a doc typo:
+  - Look for small wording issues in README.md or .buddy/*.md and submit a one-line change.
 
-## Learn the codebase by doing
+## Small coding tasks (30–90 minutes)
 
-- Trace a single user request from entry point → handler → response. Add a comment or doc explaining what you found.
-- Pick a folder from `MAP/repo_map.md` you don't understand, read it for 20 minutes, then add one sentence about it to the map.
-- Add an entry to `LINKS.md` for any internal doc your team relies on but isn't yet linked.
+- Add a unit test for a DB helper or handler endpoint.
+  - Pick a function in internal/db or internal/handlers with no tests and add a test.
+  - Run `make test` until it passes.
 
-## Tips
+- Improve an error or log message.
+  - Search for confusing logs (e.g., generic "failed" messages) and make them clearer.
+  - File to edit: internal/db/db.go or internal/handlers/handlers.go
 
-- **Ask early.** If a task takes >30 min just to understand, that itself is feedback worth sharing.
-- **Tiny PRs win.** A one-line fix you ship today is better than a refactor you ship next month.
-- **Update Buddy.** When you learn something new, add it to the matching `.buddy/*.md` doc so the next newcomer benefits.
+- Add a missing HTTP validation case.
+  - Example: find an input that isn't checked and add a handler-side check and test.
+
+## Learning tasks (1–3 hours)
+
+- Trace the WebSocket flow end-to-end.
+  - Start at internal/ws/hub.go, then handlers.HandleWS and handlers.startQuestion.
+  - Add a short comment in the code explaining the flow.
+
+- Improve the README example that shows how to deploy with Docker or systemd.
+  - Make one small change that clarifies a command or environment variable.
+
+## Where to look (file hints)
+
+- Program start: cmd/server/main.go
+- Handlers and API: internal/handlers/handlers.go
+- DB logic & migrations: internal/db/db.go
+- WebSocket hub: internal/ws/hub.go
+- Frontend (embedded): web/static/* and web/embed.go
+- Build & tasks: Makefile, Dockerfile, .github/workflows/go.yml
+
+## How to make a tiny PR
+
+1. Create a topic branch: `git checkout -b fix/readme-typo`
+2. Make the small change.
+3. Run `make test`.
+4. Commit and push. Open a PR with 1–3 sentences explaining why.
+
+## If you get stuck
+
+- Post the failing command and the exact error text in your team chat.
+- Point to the file you edited and the tests you ran.
+
+Next step: Run one quick win now (run app or tests). When done, tell Buddy and I will suggest a follow-up starter task.
