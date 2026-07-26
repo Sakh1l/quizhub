@@ -237,12 +237,6 @@ func (d *DB) Leaderboard() ([]models.LeaderboardEntry, error) {
 	return entries, rows.Err()
 }
 
-// UpdatePlayerScore adds delta to a player's score.
-func (d *DB) UpdatePlayerScore(playerID string, delta int) error {
-	_, err := d.conn.Exec("UPDATE players SET score = score + ? WHERE id = ?", delta, playerID)
-	return err
-}
-
 // --- Question operations ---
 
 // GetQuestion returns a question by ID.
@@ -259,14 +253,11 @@ func (d *DB) GetQuestion(id int) (models.Question, error) {
 	return q, nil
 }
 
-// QuestionCount returns total questions available.
-func (d *DB) QuestionCount() int {
-	var c int
-	d.conn.QueryRow("SELECT COUNT(*) FROM questions").Scan(&c)
-	return c
-}
-
-// GetQuestionIDs returns all question IDs in random order.
+// GetQuestionIDs returns every question ID in the bank, in random order. Used
+// as the fallback question set when the admin hasn't staged a specific
+// selection via UpdateSelectedQuestions before starting a game. Contrast with
+// ActiveQuestionIDs, which returns the fixed order locked in for the game
+// currently in progress.
 func (d *DB) GetQuestionIDs() ([]int, error) {
 	rows, err := d.conn.Query("SELECT id FROM questions ORDER BY RANDOM()")
 	if err != nil {
@@ -285,72 +276,46 @@ func (d *DB) GetQuestionIDs() ([]int, error) {
 	return ids, rows.Err()
 }
 
-// --- Answer operations ---
-
-// RecordAnswer stores a player's answer. Returns true if this is a new answer (not duplicate).
-func (d *DB) RecordAnswer(playerID string, questionID, selected int, correct bool, scoreEarned int) (bool, error) {
-	correctInt := 0
-	if correct {
-		correctInt = 1
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	res, err := d.conn.Exec(
-		`INSERT OR IGNORE INTO answers (player_id, question_id, selected, correct, score_earned, answered_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		playerID, questionID, selected, correctInt, scoreEarned, now,
-	)
-	if err != nil {
-		return false, err
-	}
-	affected, _ := res.RowsAffected()
-	return affected > 0, nil
-}
-
-// HasAnswered checks if a player already answered a question.
-func (d *DB) HasAnswered(playerID string, questionID int) bool {
-	var count int
-	d.conn.QueryRow(
-		"SELECT COUNT(*) FROM answers WHERE player_id = ? AND question_id = ?",
-		playerID, questionID,
-	).Scan(&count)
-	return count > 0
-}
-
-// GetPlayerAnswer returns a player's answer details for a specific question.
-func (d *DB) GetPlayerAnswer(playerID string, questionID int) (selected int, correct bool, err error) {
-	var correctInt int
-	err = d.conn.QueryRow(
-		"SELECT selected, correct FROM answers WHERE player_id = ? AND question_id = ?",
-		playerID, questionID,
-	).Scan(&selected, &correctInt)
-	correct = correctInt == 1
-	return
-}
-
 // --- Game state operations ---
 
+// State is the raw persisted game state for the single active room.
+type State struct {
+	Status        string
+	QuestionID    int
+	QuestionIndex int
+	StartedAt     string // RFC3339, empty if the current question hasn't started
+	TimeLimit     int
+	RoomCode      string
+}
+
+// HasActiveQuestion reports whether a question is currently being asked
+// (as opposed to lobby, countdown, reveal, or finished).
+func (s State) HasActiveQuestion() bool {
+	return s.Status == "question" && s.QuestionID != 0
+}
+
 // GetGameState returns the current game state.
-func (d *DB) GetGameState() (status string, questionID int, questionIndex int, startedAt string, timeLimit int, roomCode string, err error) {
-	err = d.conn.QueryRow(
+func (d *DB) GetGameState() (State, error) {
+	var s State
+	err := d.conn.QueryRow(
 		"SELECT status, COALESCE(current_question_id, 0), question_index, COALESCE(question_started_at, ''), time_limit, COALESCE(room_code, '') FROM game_state WHERE id = 1",
-	).Scan(&status, &questionID, &questionIndex, &startedAt, &timeLimit, &roomCode)
-	return
+	).Scan(&s.Status, &s.QuestionID, &s.QuestionIndex, &s.StartedAt, &s.TimeLimit, &s.RoomCode)
+	return s, err
 }
 
 // SetGameState updates the game state.
-func (d *DB) SetGameState(status string, questionID, questionIndex int, startedAt string, timeLimit int) error {
-	var qIDVal interface{} = questionID
-	if questionID == 0 {
+func (d *DB) SetGameState(s State) error {
+	var qIDVal interface{} = s.QuestionID
+	if s.QuestionID == 0 {
 		qIDVal = nil
 	}
-	var startedVal interface{} = startedAt
-	if startedAt == "" {
+	var startedVal interface{} = s.StartedAt
+	if s.StartedAt == "" {
 		startedVal = nil
 	}
 	_, err := d.conn.Exec(
 		"UPDATE game_state SET status = ?, current_question_id = ?, question_index = ?, question_started_at = ?, time_limit = ? WHERE id = 1",
-		status, qIDVal, questionIndex, startedVal, timeLimit,
+		s.Status, qIDVal, s.QuestionIndex, startedVal, s.TimeLimit,
 	)
 	return err
 }
@@ -461,15 +426,16 @@ func (d *DB) ListAllQuestions() ([]models.Question, error) {
 
 // CreateRoom stores/updates the active room code and resets to lobby state.
 func (d *DB) CreateRoom(code string) error {
-	status, _, _, _, timeLimit, _, err := d.GetGameState()
+	state, err := d.GetGameState()
 	if err != nil {
 		return err
 	}
+	timeLimit := state.TimeLimit
 	if timeLimit <= 0 {
 		timeLimit = 15
 	}
-	if status != "lobby" {
-		if err := d.SetGameState("lobby", 0, 0, "", timeLimit); err != nil {
+	if state.Status != "lobby" {
+		if err := d.SetGameState(State{Status: "lobby", TimeLimit: timeLimit}); err != nil {
 			return err
 		}
 	}
@@ -477,20 +443,16 @@ func (d *DB) CreateRoom(code string) error {
 	return err
 }
 
-func (d *DB) ListQuestions() ([]models.Question, error) { return d.ListAllQuestions() }
-
-func (d *DB) GetLeaderboard() ([]models.LeaderboardEntry, error) { return d.Leaderboard() }
-
 // StartGame initializes game state at first question.
 func (d *DB) StartGame(ids []int) error {
 	if len(ids) == 0 {
 		return fmt.Errorf("no questions")
 	}
-	status, _, _, _, timeLimit, _, err := d.GetGameState()
+	state, err := d.GetGameState()
 	if err != nil {
 		return err
 	}
-	if status != "lobby" {
+	if state.Status != "lobby" {
 		return fmt.Errorf("game already active")
 	}
 	idsJSON, err := json.Marshal(ids)
@@ -499,21 +461,23 @@ func (d *DB) StartGame(ids []int) error {
 	}
 	_, err = d.conn.Exec(
 		"UPDATE game_state SET status = 'countdown', current_question_id = ?, question_index = 0, question_started_at = NULL, time_limit = ?, question_ids = ? WHERE id = 1",
-		ids[0], timeLimit, string(idsJSON),
+		ids[0], state.TimeLimit, string(idsJSON),
 	)
 	return err
 }
 
 // BeginCurrentQuestion marks the current question as active and starts its timer.
 func (d *DB) BeginCurrentQuestion() error {
-	_, qID, qIdx, _, timeLimit, _, err := d.GetGameState()
+	state, err := d.GetGameState()
 	if err != nil {
 		return err
 	}
-	if qID == 0 {
+	if state.QuestionID == 0 {
 		return fmt.Errorf("no current question")
 	}
-	return d.SetGameState("question", qID, qIdx, time.Now().UTC().Format(time.RFC3339), timeLimit)
+	state.Status = "question"
+	state.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	return d.SetGameState(state)
 }
 
 // ActiveQuestionIDs returns the persisted question order for the active game.
@@ -531,7 +495,7 @@ func (d *DB) ActiveQuestionIDs() ([]int, error) {
 
 // NextQuestion advances through the persisted selected question order.
 func (d *DB) NextQuestion() (bool, error) {
-	_, qID, qIdx, _, timeLimit, _, err := d.GetGameState()
+	state, err := d.GetGameState()
 	if err != nil {
 		return false, err
 	}
@@ -542,15 +506,20 @@ func (d *DB) NextQuestion() (bool, error) {
 	if len(ids) == 0 {
 		return false, nil
 	}
-	nextIdx := qIdx + 1
+	nextIdx := state.QuestionIndex + 1
 	if nextIdx >= len(ids) {
-		if err := d.SetGameState("finished", qID, qIdx, "", timeLimit); err != nil {
+		state.Status = "finished"
+		state.StartedAt = ""
+		if err := d.SetGameState(state); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
-	err = d.SetGameState("question", ids[nextIdx], nextIdx, time.Now().UTC().Format(time.RFC3339), timeLimit)
-	return true, err
+	state.Status = "question"
+	state.QuestionID = ids[nextIdx]
+	state.QuestionIndex = nextIdx
+	state.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	return true, d.SetGameState(state)
 }
 
 func (d *DB) SubmitAnswer(playerID string, questionID, selected int, correct bool, score int) (bool, error) {

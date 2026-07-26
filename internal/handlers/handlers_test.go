@@ -284,9 +284,9 @@ func TestSelectedQuestionOrderAndRevealState(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("finish status=%d body=%s", w.Code, w.Body.String())
 	}
-	status, current, _, _, _, _, _ := h.DB.GetGameState()
-	if status != "finished" || current != first || current == third {
-		t.Fatalf("unexpected final state status=%s current=%d third=%d", status, current, third)
+	dbState, _ := h.DB.GetGameState()
+	if dbState.Status != "finished" || dbState.QuestionID != first || dbState.QuestionID == third {
+		t.Fatalf("unexpected final state status=%s current=%d third=%d", dbState.Status, dbState.QuestionID, third)
 	}
 }
 

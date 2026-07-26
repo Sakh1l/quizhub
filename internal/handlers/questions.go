@@ -19,7 +19,7 @@ func (h *Handler) QuestionsRouter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
-	questions, err := h.DB.ListQuestions()
+	questions, err := h.DB.ListAllQuestions()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list questions")
 		return
@@ -35,7 +35,7 @@ func (h *Handler) UpdateSelectedQuestions(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	h.setQuestionIDs(req.IDs)
+	h.setStagedQuestionIDs(req.IDs)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "questions updated"})
 }
 

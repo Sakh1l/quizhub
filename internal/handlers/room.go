@@ -69,8 +69,8 @@ func (h *Handler) Join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, _, _, _, _, _, _ := h.DB.GetGameState()
-	if status != "lobby" {
+	state, _ := h.DB.GetGameState()
+	if state.Status != "lobby" {
 		writeError(w, http.StatusBadRequest, "game already in progress")
 		return
 	}
@@ -104,11 +104,11 @@ func (h *Handler) RoomInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, _, _, _, _, _, _ := h.DB.GetGameState()
+	state, _ := h.DB.GetGameState()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"room_code": activeCode,
-		"status":    status,
-		"joinable":  status == "lobby",
+		"status":    state.Status,
+		"joinable":  state.Status == "lobby",
 	})
 }
 

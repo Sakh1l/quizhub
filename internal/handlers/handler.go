@@ -15,18 +15,18 @@ const version = "1.0.0"
 const countdownDuration = 10
 
 type Handler struct {
-	DB           *db.DB
-	Hub          *ws.Hub
-	AdminPIN     string
-	tokenTTL     time.Duration
-	stateMu      sync.RWMutex
-	questionIDs  []int
-	timeLimit    int
-	adminTokens  map[string]time.Time
-	authAttempts map[string]authAttempt
-	trustProxy   bool
-	timerMu      sync.Mutex
-	activeTimer  *time.Timer
+	DB                *db.DB
+	Hub               *ws.Hub
+	AdminPIN          string
+	tokenTTL          time.Duration
+	stateMu           sync.RWMutex
+	stagedQuestionIDs []int // admin-selected set, staged before StartGame locks in the order
+	timeLimit         int
+	adminTokens       map[string]time.Time
+	authAttempts      map[string]authAttempt
+	trustProxy        bool
+	timerMu           sync.Mutex
+	activeTimer       *time.Timer
 }
 
 func New(database *db.DB, hub *ws.Hub) *Handler {
@@ -53,21 +53,21 @@ func New(database *db.DB, hub *ws.Hub) *Handler {
 	}
 }
 
-func (h *Handler) getQuestionIDs() []int {
+func (h *Handler) getStagedQuestionIDs() []int {
 	h.stateMu.RLock()
 	defer h.stateMu.RUnlock()
-	return append([]int(nil), h.questionIDs...)
+	return append([]int(nil), h.stagedQuestionIDs...)
 }
 
-func (h *Handler) setQuestionIDs(ids []int) {
+func (h *Handler) setStagedQuestionIDs(ids []int) {
 	h.stateMu.Lock()
-	h.questionIDs = append([]int(nil), ids...)
+	h.stagedQuestionIDs = append([]int(nil), ids...)
 	h.stateMu.Unlock()
 }
 
-func (h *Handler) clearQuestionIDs() {
+func (h *Handler) clearStagedQuestionIDs() {
 	h.stateMu.Lock()
-	h.questionIDs = nil
+	h.stagedQuestionIDs = nil
 	h.stateMu.Unlock()
 }
 

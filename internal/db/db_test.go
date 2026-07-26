@@ -28,9 +28,12 @@ func addTestQuestion(t *testing.T, d *DB) int {
 // seed() is intentionally a no-op — admins create questions per quiz.
 func TestMigrationAndSeed(t *testing.T) {
 	d := newTestDB(t)
-	count := d.QuestionCount()
-	if count != 0 {
-		t.Errorf("expected 0 questions on fresh DB (seed is no-op), got %d", count)
+	questions, err := d.ListAllQuestions()
+	if err != nil {
+		t.Fatalf("ListAllQuestions: %v", err)
+	}
+	if len(questions) != 0 {
+		t.Errorf("expected 0 questions on fresh DB (seed is no-op), got %d", len(questions))
 	}
 }
 
@@ -76,27 +79,17 @@ func TestPlayerCount(t *testing.T) {
 	}
 }
 
-func TestUpdatePlayerScore(t *testing.T) {
-	d := newTestDB(t)
-	p, _ := d.CreatePlayer("Alice")
-	d.UpdatePlayerScore(p.ID, 500)
-	got, _ := d.GetPlayer(p.ID)
-	if got.Score != 500 {
-		t.Errorf("expected score 500, got %d", got.Score)
-	}
-	d.UpdatePlayerScore(p.ID, 300)
-	got, _ = d.GetPlayer(p.ID)
-	if got.Score != 800 {
-		t.Errorf("expected score 800 (cumulative), got %d", got.Score)
-	}
-}
-
 func TestLeaderboard(t *testing.T) {
 	d := newTestDB(t)
 	p1, _ := d.CreatePlayer("Alice")
 	p2, _ := d.CreatePlayer("Bob")
-	d.UpdatePlayerScore(p1.ID, 200)
-	d.UpdatePlayerScore(p2.ID, 500)
+	qID := addTestQuestion(t, d) // correct answer is index 2
+	if _, err := d.SubmitAnswer(p1.ID, qID, 2, true, 200); err != nil {
+		t.Fatalf("SubmitAnswer p1: %v", err)
+	}
+	if _, err := d.SubmitAnswer(p2.ID, qID, 2, true, 500); err != nil {
+		t.Fatalf("SubmitAnswer p2: %v", err)
+	}
 	entries, err := d.Leaderboard()
 	if err != nil {
 		t.Fatalf("Leaderboard: %v", err)
@@ -144,77 +137,79 @@ func TestGetQuestionIDs(t *testing.T) {
 	}
 }
 
-func TestRecordAnswer(t *testing.T) {
+func TestSubmitAnswer(t *testing.T) {
 	d := newTestDB(t)
 	p, _ := d.CreatePlayer("Alice")
 	qID := addTestQuestion(t, d) // need a real question for FK constraint
-	recorded, err := d.RecordAnswer(p.ID, qID, 1, true, 500)
+
+	recorded, err := d.SubmitAnswer(p.ID, qID, 1, true, 500)
 	if err != nil {
-		t.Fatalf("RecordAnswer: %v", err)
+		t.Fatalf("SubmitAnswer: %v", err)
 	}
 	if !recorded {
 		t.Error("expected recorded=true for first answer")
 	}
-	recorded, err = d.RecordAnswer(p.ID, qID, 2, false, 0)
+	got, _ := d.GetPlayer(p.ID)
+	if got.Score != 500 {
+		t.Errorf("expected score 500 after first answer, got %d", got.Score)
+	}
+
+	// A duplicate submission for the same player+question must be ignored,
+	// including its score, even if it claims a different (nonsensical) result.
+	recorded, err = d.SubmitAnswer(p.ID, qID, 2, false, 999)
 	if err != nil {
-		t.Fatalf("RecordAnswer duplicate: %v", err)
+		t.Fatalf("SubmitAnswer duplicate: %v", err)
 	}
 	if recorded {
 		t.Error("expected recorded=false for duplicate answer")
 	}
-}
-
-func TestHasAnswered(t *testing.T) {
-	d := newTestDB(t)
-	p, _ := d.CreatePlayer("Alice")
-	qID := addTestQuestion(t, d) // need a real question for FK constraint
-	if d.HasAnswered(p.ID, qID) {
-		t.Error("should not have answered yet")
-	}
-	d.RecordAnswer(p.ID, qID, 0, false, 0)
-	if !d.HasAnswered(p.ID, qID) {
-		t.Error("should have answered now")
+	got, _ = d.GetPlayer(p.ID)
+	if got.Score != 500 {
+		t.Errorf("expected score to stay 500 after duplicate answer, got %d", got.Score)
 	}
 }
 
 func TestGameState(t *testing.T) {
 	d := newTestDB(t)
-	status, qID, qIdx, startedAt, timeLimit, roomCode, err := d.GetGameState()
+	state, err := d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState: %v", err)
 	}
-	if status != "lobby" || qID != 0 || qIdx != 0 || startedAt != "" || timeLimit != 15 || roomCode != "" {
-		t.Errorf("unexpected initial state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
+	if state.Status != "lobby" || state.QuestionID != 0 || state.QuestionIndex != 0 || state.StartedAt != "" || state.TimeLimit != 15 || state.RoomCode != "" {
+		t.Errorf("unexpected initial state: %+v", state)
 	}
-	d.SetGameState("question", 5, 2, "2026-01-01T00:00:00Z", 20)
-	status, qID, qIdx, startedAt, timeLimit, roomCode, err = d.GetGameState()
+	d.SetGameState(State{Status: "question", QuestionID: 5, QuestionIndex: 2, StartedAt: "2026-01-01T00:00:00Z", TimeLimit: 20})
+	state, err = d.GetGameState()
 	if err != nil {
 		t.Fatalf("GetGameState after set: %v", err)
 	}
-	if status != "question" || qID != 5 || qIdx != 2 || startedAt != "2026-01-01T00:00:00Z" || timeLimit != 20 || roomCode != "" {
-		t.Errorf("unexpected state: %s, %d, %d, %s, %d", status, qID, qIdx, startedAt, timeLimit)
+	if state.Status != "question" || state.QuestionID != 5 || state.QuestionIndex != 2 || state.StartedAt != "2026-01-01T00:00:00Z" || state.TimeLimit != 20 || state.RoomCode != "" {
+		t.Errorf("unexpected state: %+v", state)
 	}
 }
 
 func TestResetGame(t *testing.T) {
 	d := newTestDB(t)
 	d.CreatePlayer("Alice")
-	d.SetGameState("question", 1, 0, "2026-01-01T00:00:00Z", 15)
+	d.SetGameState(State{Status: "question", QuestionID: 1, QuestionIndex: 0, StartedAt: "2026-01-01T00:00:00Z", TimeLimit: 15})
 	if err := d.ResetGame(); err != nil {
 		t.Fatalf("ResetGame: %v", err)
 	}
 	if c := d.PlayerCount(); c != 0 {
 		t.Errorf("expected 0 players after reset, got %d", c)
 	}
-	status, _, _, _, _, _, _ := d.GetGameState()
-	if status != "lobby" {
-		t.Errorf("expected lobby after reset, got %s", status)
+	state, _ := d.GetGameState()
+	if state.Status != "lobby" {
+		t.Errorf("expected lobby after reset, got %s", state.Status)
 	}
 }
 
 func TestAddQuestion(t *testing.T) {
 	d := newTestDB(t)
-	before := d.QuestionCount()
+	before, err := d.ListAllQuestions()
+	if err != nil {
+		t.Fatalf("ListAllQuestions: %v", err)
+	}
 	id, err := d.AddQuestion("Custom Q?", []string{"A", "B"}, 0, "custom")
 	if err != nil {
 		t.Fatalf("AddQuestion: %v", err)
@@ -222,17 +217,21 @@ func TestAddQuestion(t *testing.T) {
 	if id <= 0 {
 		t.Errorf("expected positive ID, got %d", id)
 	}
-	if after := d.QuestionCount(); after != before+1 {
-		t.Errorf("expected %d questions, got %d", before+1, after)
+	after, err := d.ListAllQuestions()
+	if err != nil {
+		t.Fatalf("ListAllQuestions: %v", err)
+	}
+	if len(after) != len(before)+1 {
+		t.Errorf("expected %d questions, got %d", len(before)+1, len(after))
 	}
 }
 
 func TestSeedIdempotent(t *testing.T) {
 	d := newTestDB(t)
-	before := d.QuestionCount()
+	before, _ := d.ListAllQuestions()
 	d.seed()
-	after := d.QuestionCount()
-	if before != after {
-		t.Errorf("seed not idempotent: before=%d, after=%d", before, after)
+	after, _ := d.ListAllQuestions()
+	if len(before) != len(after) {
+		t.Errorf("seed not idempotent: before=%d, after=%d", len(before), len(after))
 	}
 }
