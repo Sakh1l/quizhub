@@ -50,6 +50,13 @@
   - Fixed supervisor backend crash-loop: `backend/server.py` pointed to `/app/backend/quizhub` (missing); changed `GO_BINARY` default to `../quizhub` with `QUIZHUB_BINARY` env override. Rebuilt binary.
   - Added regression test `TestConcurrentAdminAccess` in `handlers_test.go`.
   - All checks green: `go build`, `go vet`, `gofmt -l`, `go test -race` on full module. External URL (`/api/health`, admin login, full flow) verified.
+- [Aug 2026] Phase 9: Quiz Library (Roadmap M1 — see `ROADMAP.md`)
+  - New `quizzes` table; `questions.quiz_id` and `game_state.quiz_id` link questions/sessions to a saved quiz. Existing pre-migration questions auto-backfilled into a "Migrated Quiz" so upgrades don't lose data.
+  - `ResetGame` no longer deletes `questions` — quizzes are a persistent, reusable library, not session-scoped scratch data. Only players/answers/room state are cleared on reset.
+  - New admin-only endpoints: `GET/POST /api/admin/quizzes`, `/rename`, `/duplicate`, `/delete`, `GET/POST /api/admin/quizzes/questions`. `POST /api/room/create` now takes `{"quiz_id":N}` instead of hosting "whatever's in the questions table."
+  - Admin panel rewritten: PIN → **Library** (create/edit/duplicate/delete saved quizzes) → **Editor** (add/remove questions, rename, set timer) → Host → existing room/game flow → **Back to Library** (quiz persists) instead of the old "Create New Quiz" that implicitly wiped everything.
+  - Verified end-to-end in-browser: create quiz → add question → host → player joins → countdown → question → reveal → next → finished → back to library → quiz + question count survived the reset → duplicate produced an independent copy → delete removed only the target quiz.
+  - All checks green: `go build`, `go vet`, `gofmt -l`, `go mod tidy` (no diff), `go test -race` on full module.
 
 
 

@@ -115,9 +115,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/auth", methodOnly(http.MethodPost, h.AdminAuth))
 	mux.HandleFunc("/api/admin/timer", methodOnly(http.MethodPost, h.adminOnly(h.SetTimer)))
 	mux.HandleFunc("/api/room/create", methodOnly(http.MethodPost, h.adminOnly(h.CreateRoom)))
-	mux.HandleFunc("/api/questions/add", methodOnly(http.MethodPost, h.adminOnly(h.AddQuestion)))
+	mux.HandleFunc("/api/questions", methodOnly(http.MethodPost, h.adminOnly(h.UpdateSelectedQuestions)))
 	mux.HandleFunc("/api/questions/delete", methodOnly(http.MethodPost, h.adminOnly(h.DeleteQuestion)))
-	mux.HandleFunc("/api/questions", h.QuestionsRouter)
+
+	mux.HandleFunc("/api/admin/quizzes", h.QuizzesRouter)
+	mux.HandleFunc("/api/admin/quizzes/rename", methodOnly(http.MethodPost, h.adminOnly(h.RenameQuiz)))
+	mux.HandleFunc("/api/admin/quizzes/duplicate", methodOnly(http.MethodPost, h.adminOnly(h.DuplicateQuiz)))
+	mux.HandleFunc("/api/admin/quizzes/delete", methodOnly(http.MethodPost, h.adminOnly(h.DeleteQuiz)))
+	mux.HandleFunc("/api/admin/quizzes/questions", h.QuizQuestionsRouter)
 
 	mux.HandleFunc("/api/ws", h.HandleWS)
 }

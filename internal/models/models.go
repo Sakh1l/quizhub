@@ -10,9 +10,19 @@ type Player struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Quiz is a saved, reusable set of questions a host can run any number of times.
+type Quiz struct {
+	ID            int       `json:"id"`
+	Title         string    `json:"title"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	QuestionCount int       `json:"question_count"`
+}
+
 // Question represents a single quiz question.
 type Question struct {
 	ID       int      `json:"id"`
+	QuizID   int      `json:"quiz_id"`
 	Text     string   `json:"text"`
 	Options  []string `json:"options"`
 	Answer   int      `json:"answer"`

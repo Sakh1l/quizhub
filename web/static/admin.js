@@ -1,6 +1,6 @@
 /* =========================================================
    QuizHub Admin Panel - admin.js
-   Flow: PIN → Setup questions → Create room → Lobby → Game
+   Flow: PIN → Quiz Library → Quiz Editor → Room → Lobby → Game
    ========================================================= */
 (function () {
   'use strict';
@@ -9,10 +9,12 @@
   let socket = null;
   let reconnectTimer = null;
 
-  let adminStep = 'pin'; // pin, setup, room, countdown, question, reveal, finished
+  let adminStep = 'pin'; // pin, library, editor, room, countdown, question, reveal, finished
   let players = [];
   let leaderboard = [];
-  let questions = [];
+  let quizzes = [];
+  let currentQuiz = null; // { id, title, question_count } while in the editor
+  let questions = []; // questions belonging to currentQuiz
   let answerStats = { total: 0, correct: 0, wrong: 0 };
   let currentQuestion = null;
   let questionIndex = 0;
@@ -123,21 +125,7 @@
         render();
         break;
       case 'game_reset':
-        adminStep = 'setup';
-        currentQuestion = null;
-        players = [];
-        leaderboard = [];
-        questions = [];
-        roomCode = '';
-        roomLink = '';
-        answerStats = { total: 0, correct: 0, wrong: 0 };
-        correctAnswer = null;
-        questionIndex = 0;
-        totalQuestions = 0;
-        timeLeft = 0;
-        countdownLeft = 0;
-        clearInterval(timerInterval);
-        render();
+        backToLibrary();
         break;
     }
   }
@@ -190,7 +178,8 @@
       ),
     ));
 
-    if (adminStep === 'setup') renderSetup(app);
+    if (adminStep === 'library') renderLibrary(app);
+    else if (adminStep === 'editor') renderEditor(app);
     else if (adminStep === 'room') renderRoomLobby(app);
     else if (adminStep === 'countdown') renderCountdownView(app);
     else if (adminStep === 'question' || adminStep === 'reveal') renderGameView(app);
@@ -217,19 +206,118 @@
     try {
       const data = await api('/api/admin/auth', { method: 'POST', body: JSON.stringify({ pin: $('#pin-input').value.trim() }) });
       adminToken = data.token;
-      adminStep = 'setup';
       connectWS();
-      // Load existing questions if any
-      try { questions = await api('/api/questions'); } catch (_) { questions = []; }
-      render();
+      await loadLibrary();
     } catch (err) { errorEl.textContent = err.message || 'Invalid PIN'; }
   }
 
-  // ---- Setup Screen: Add questions ----
-  function renderSetup(app) {
-    const card = el('div', { className: 'card', 'data-testid': 'setup-screen' },
-      el('h2', { style: 'margin-bottom:0.25rem' }, 'Create Your Quiz'),
-      el('p', { className: 'subtitle', style: 'margin-bottom:1.5rem' }, 'Add questions, then create a room to share with players'),
+  // ---- Library: saved, reusable quizzes ----
+  async function loadLibrary() {
+    try { quizzes = await api('/api/admin/quizzes'); } catch (_) { quizzes = []; }
+    adminStep = 'library';
+    render();
+  }
+
+  function backToLibrary() {
+    currentQuiz = null;
+    questions = [];
+    players = [];
+    leaderboard = [];
+    roomCode = '';
+    roomLink = '';
+    answerStats = { total: 0, correct: 0, wrong: 0 };
+    correctAnswer = null;
+    currentQuestion = null;
+    questionIndex = 0;
+    totalQuestions = 0;
+    timeLeft = 0;
+    countdownLeft = 0;
+    clearInterval(timerInterval);
+    loadLibrary();
+  }
+
+  function renderLibrary(app) {
+    const card = el('div', { className: 'card', 'data-testid': 'library-screen' },
+      el('h2', { style: 'margin-bottom:0.25rem' }, 'Your Quizzes'),
+      el('p', { className: 'subtitle', style: 'margin-bottom:1.5rem' }, 'Create a reusable quiz, add questions once, then host it any time'),
+
+      el('div', { className: 'add-q-form', 'data-testid': 'new-quiz-form' },
+        el('div', { className: 'form-row' },
+          el('input', { id: 'new-quiz-title', type: 'text', placeholder: 'New quiz title...', 'data-testid': 'new-quiz-title-input',
+            onkeydown: (e) => { if (e.key === 'Enter') handleCreateQuiz(); } }),
+          el('button', { className: 'btn btn-primary', 'data-testid': 'create-quiz-btn', onclick: handleCreateQuiz }, 'New Quiz'),
+        ),
+        el('p', { className: 'error-msg', 'data-testid': 'create-quiz-error' }),
+      ),
+
+      el('div', { style: 'margin-top:1.5rem' },
+        quizzes.length === 0
+          ? el('p', { className: 'empty-state' }, 'No quizzes yet — create one above to get started')
+          : el('div', { className: 'quiz-grid', 'data-testid': 'quiz-list' }, ...quizzes.map(renderQuizCard)),
+      ),
+    );
+    app.appendChild(card);
+  }
+
+  function renderQuizCard(q) {
+    return el('div', { className: 'quiz-card' },
+      el('div', { className: 'quiz-card-title' }, q.title),
+      el('div', { className: 'quiz-card-meta' }, `${q.question_count} question${q.question_count === 1 ? '' : 's'}`),
+      el('div', { className: 'quiz-card-actions' },
+        el('button', { className: 'btn btn-primary btn-sm', onclick: () => openEditor(q) }, 'Edit'),
+        el('button', { className: 'btn btn-secondary btn-sm', onclick: () => handleDuplicateQuiz(q.id) }, 'Duplicate'),
+        el('button', { className: 'btn btn-danger btn-sm', onclick: () => handleDeleteQuiz(q.id, q.title) }, 'Delete'),
+      ),
+    );
+  }
+
+  async function handleCreateQuiz() {
+    const title = $('#new-quiz-title')?.value.trim();
+    const errorEl = $('[data-testid="create-quiz-error"]');
+    if (!title) { errorEl.textContent = 'Enter a title for the quiz'; return; }
+    errorEl.textContent = '';
+    try {
+      const quiz = await api('/api/admin/quizzes', { method: 'POST', body: JSON.stringify({ title }) });
+      await openEditor(quiz);
+    } catch (err) { errorEl.textContent = err.message; }
+  }
+
+  async function handleDuplicateQuiz(id) {
+    try {
+      await api('/api/admin/quizzes/duplicate', { method: 'POST', body: JSON.stringify({ id }) });
+      await loadLibrary();
+    } catch (err) { alert(err.message); }
+  }
+
+  async function handleDeleteQuiz(id, title) {
+    if (!window.confirm(`Delete "${title}" and all of its questions? This cannot be undone.`)) return;
+    try {
+      await api('/api/admin/quizzes/delete', { method: 'POST', body: JSON.stringify({ id }) });
+      await loadLibrary();
+    } catch (err) { alert(err.message); }
+  }
+
+  // ---- Editor: add/remove questions for one quiz ----
+  async function openEditor(quiz) {
+    currentQuiz = quiz;
+    try { questions = await api(`/api/admin/quizzes/questions?quiz_id=${quiz.id}`); } catch (_) { questions = []; }
+    adminStep = 'editor';
+    render();
+  }
+
+  function renderEditor(app) {
+    const card = el('div', { className: 'card', 'data-testid': 'editor-screen' },
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;flex-wrap:wrap;gap:0.5rem' },
+        el('h2', null, currentQuiz.title),
+        el('button', { className: 'btn btn-secondary btn-sm', 'data-testid': 'back-to-library-btn', onclick: () => loadLibrary() }, '← Back to Library'),
+      ),
+      el('p', { className: 'subtitle', style: 'margin-bottom:1.5rem' }, 'Add questions, then host this quiz to share with players'),
+
+      // Rename
+      el('div', { className: 'form-row', style: 'margin-bottom:1.5rem' },
+        el('input', { id: 'rename-quiz-title', type: 'text', value: currentQuiz.title, 'data-testid': 'rename-quiz-input' }),
+        el('button', { className: 'btn btn-secondary btn-sm', onclick: handleRenameQuiz }, 'Rename'),
+      ),
 
       // Add question form
       el('div', { className: 'add-q-form', 'data-testid': 'add-q-form' },
@@ -266,16 +354,27 @@
         ),
       ),
 
-      // Timer config + Create Room button
+      // Timer config + Host button
       el('div', { style: 'margin-top:1.5rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap' },
         el('label', { style: 'font-size:0.85rem;color:var(--text-secondary)' }, 'Timer per question:'),
         el('input', { type: 'number', id: 'timer-input', value: String(timeLimit), style: 'width:70px;text-align:center', 'data-testid': 'timer-input' }),
         el('span', { style: 'font-size:0.85rem;color:var(--text-secondary)' }, 'seconds'),
         el('div', { style: 'flex:1' }),
-        el('button', { className: 'btn btn-accent', 'data-testid': 'create-room-btn', onclick: handleCreateRoom, disabled: questions.length === 0 }, 'Create Quiz Room'),
+        el('button', { className: 'btn btn-accent', 'data-testid': 'create-room-btn', onclick: handleCreateRoom, disabled: questions.length === 0 }, 'Host This Quiz'),
       ),
+      el('p', { className: 'error-msg', 'data-testid': 'host-error' }),
     );
     app.appendChild(card);
+  }
+
+  async function handleRenameQuiz() {
+    const title = $('#rename-quiz-title')?.value.trim();
+    if (!title || title === currentQuiz.title) return;
+    try {
+      await api('/api/admin/quizzes/rename', { method: 'POST', body: JSON.stringify({ id: currentQuiz.id, title }) });
+      currentQuiz.title = title;
+      render();
+    } catch (err) { alert(err.message); }
   }
 
   async function handleAddQuestion() {
@@ -289,8 +388,9 @@
 
     errorEl.textContent = '';
     try {
-      await api('/api/questions/add', { method: 'POST', body: JSON.stringify({ text, options, answer, category: 'custom' }) });
-      questions = await api('/api/questions');
+      await api('/api/admin/quizzes/questions', { method: 'POST', body: JSON.stringify({ quiz_id: currentQuiz.id, text, options, answer, category: 'custom' }) });
+      questions = await api(`/api/admin/quizzes/questions?quiz_id=${currentQuiz.id}`);
+      currentQuiz.question_count = questions.length;
       // Clear form
       if ($('#q-text')) $('#q-text').value = '';
       [0,1,2,3].forEach(i => { if ($(`#q-opt-${i}`)) $(`#q-opt-${i}`).value = ''; });
@@ -302,11 +402,15 @@
     try {
       await api('/api/questions/delete', { method: 'POST', body: JSON.stringify({ id }) });
       questions = questions.filter(q => q.id !== id);
+      currentQuiz.question_count = questions.length;
       render();
     } catch (_) {}
   }
 
   async function handleCreateRoom() {
+    const errorEl = $('[data-testid="host-error"]');
+    if (errorEl) errorEl.textContent = '';
+
     // Set timer first
     const timerVal = parseInt($('#timer-input')?.value);
     if (timerVal >= 5 && timerVal <= 120) {
@@ -314,12 +418,15 @@
     }
 
     try {
-      const data = await api('/api/room/create', { method: 'POST' });
+      const data = await api('/api/room/create', { method: 'POST', body: JSON.stringify({ quiz_id: currentQuiz.id }) });
       roomCode = data.room_code;
       roomLink = data.link;
       adminStep = 'room';
       render();
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+      if (errorEl) errorEl.textContent = err.message;
+      else alert(err.message);
+    }
   }
 
   // ---- Room Lobby: Share code, see players, start game ----
@@ -476,36 +583,22 @@
             el('span', { className: rCls }, `#${e.rank}`), el('span', { className: 'lb-name' }, e.nickname), el('span', { className: 'lb-score' }, String(e.score)));
         })),
       el('div', { style: 'margin-top:2rem' },
-        el('button', { className: 'btn btn-accent', 'data-testid': 'new-quiz-btn', onclick: handleNewQuiz }, 'Create New Quiz')),
+        el('button', { className: 'btn btn-accent', 'data-testid': 'new-quiz-btn', onclick: handleBackToLibrary }, '← Back to Library')),
     );
     app.appendChild(card);
   }
 
   async function resetSession() {
     await api('/api/game/reset', { method: 'POST' });
-    adminStep = 'setup';
-    currentQuestion = null;
-    questions = [];
-    roomCode = '';
-    roomLink = '';
-    players = [];
-    leaderboard = [];
-    answerStats = { total: 0, correct: 0, wrong: 0 };
-    correctAnswer = null;
-    questionIndex = 0;
-    totalQuestions = 0;
-    timeLeft = 0;
-    countdownLeft = 0;
-    clearInterval(timerInterval);
-    render();
+    backToLibrary();
   }
 
-  async function handleNewQuiz() {
+  async function handleBackToLibrary() {
     try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
   }
 
   async function handleResetSession() {
-    const ok = window.confirm('Reset this quiz session and clear players, questions, scores, and room data? This cannot be undone.');
+    const ok = window.confirm('Reset this quiz session and clear players, scores, and room data? Your saved quizzes are kept. This cannot be undone.');
     if (!ok) return;
     try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
   }

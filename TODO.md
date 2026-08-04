@@ -119,10 +119,11 @@
 
 | ID     | Priority | Item                                                                       |
 |--------|----------|----------------------------------------------------------------------------|
-| C.2.1  | P1       | Real-time updates via WebSockets/SSE (currently polling every 2s)          |
-| C.2.2  | P1       | Admin/Host view - separate interface to control game flow                  |
-| C.2.3  | P1       | Room system - multiple concurrent quiz sessions with join codes            |
-| C.2.4  | P1       | Authentication for host/admin endpoints                                    |
+| C.2.1  | DONE     | Real-time updates via WebSockets/SSE (currently polling every 2s)          |
+| C.2.2  | DONE     | Admin/Host view - separate interface to control game flow                  |
+| C.2.3a | DONE     | Quiz library - saved, reusable quizzes (Roadmap M1, see `ROADMAP.md`)      |
+| C.2.3b | P1       | Multi-room - concurrent quiz sessions (Roadmap M2; single room today)      |
+| C.2.4  | P1       | Real host accounts (Roadmap M3; single shared PIN today)                   |
 | C.2.5  | P2       | Sound effects (correct/wrong answers, timer warning)                       |
 | C.2.6  | P2       | Dark/light mode toggle                                                     |
 | C.2.7  | P2       | Player avatars/profile pictures                                            |

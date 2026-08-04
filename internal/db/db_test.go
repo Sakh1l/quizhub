@@ -14,10 +14,20 @@ func newTestDB(t *testing.T) *DB {
 	return d
 }
 
-// addTestQuestion inserts a question and returns its ID.
-func addTestQuestion(t *testing.T, d *DB) int {
+// newTestQuiz creates a quiz and returns its ID.
+func newTestQuiz(t *testing.T, d *DB) int {
 	t.Helper()
-	id, err := d.AddQuestion("What is 2+2?", []string{"1", "2", "4", "8"}, 2, "math")
+	id, err := d.CreateQuiz("Test Quiz")
+	if err != nil {
+		t.Fatalf("CreateQuiz: %v", err)
+	}
+	return id
+}
+
+// addTestQuestion inserts a question into the given quiz and returns its ID.
+func addTestQuestion(t *testing.T, d *DB, quizID int) int {
+	t.Helper()
+	id, err := d.AddQuestion(quizID, "What is 2+2?", []string{"1", "2", "4", "8"}, 2, "math")
 	if err != nil {
 		t.Fatalf("addTestQuestion: %v", err)
 	}
@@ -28,12 +38,12 @@ func addTestQuestion(t *testing.T, d *DB) int {
 // seed() is intentionally a no-op — admins create questions per quiz.
 func TestMigrationAndSeed(t *testing.T) {
 	d := newTestDB(t)
-	questions, err := d.ListAllQuestions()
+	quizzes, err := d.ListQuizzes()
 	if err != nil {
-		t.Fatalf("ListAllQuestions: %v", err)
+		t.Fatalf("ListQuizzes: %v", err)
 	}
-	if len(questions) != 0 {
-		t.Errorf("expected 0 questions on fresh DB (seed is no-op), got %d", len(questions))
+	if len(quizzes) != 0 {
+		t.Errorf("expected 0 quizzes on fresh DB (seed is no-op), got %d", len(quizzes))
 	}
 }
 
@@ -83,7 +93,8 @@ func TestLeaderboard(t *testing.T) {
 	d := newTestDB(t)
 	p1, _ := d.CreatePlayer("Alice")
 	p2, _ := d.CreatePlayer("Bob")
-	qID := addTestQuestion(t, d) // correct answer is index 2
+	quizID := newTestQuiz(t, d)
+	qID := addTestQuestion(t, d, quizID) // correct answer is index 2
 	if _, err := d.SubmitAnswer(p1.ID, qID, 2, true, 200); err != nil {
 		t.Fatalf("SubmitAnswer p1: %v", err)
 	}
@@ -107,7 +118,8 @@ func TestLeaderboard(t *testing.T) {
 
 func TestGetQuestion(t *testing.T) {
 	d := newTestDB(t)
-	id := addTestQuestion(t, d)
+	quizID := newTestQuiz(t, d)
+	id := addTestQuestion(t, d, quizID)
 	q, err := d.GetQuestion(id)
 	if err != nil {
 		t.Fatalf("GetQuestion: %v", err)
@@ -115,32 +127,46 @@ func TestGetQuestion(t *testing.T) {
 	if q.Text == "" || len(q.Options) == 0 {
 		t.Errorf("empty question: %+v", q)
 	}
+	if q.QuizID != quizID {
+		t.Errorf("expected quiz_id %d, got %d", quizID, q.QuizID)
+	}
 }
 
 func TestGetQuestionIDs(t *testing.T) {
 	d := newTestDB(t)
-	ids, err := d.GetQuestionIDs()
+	quizID := newTestQuiz(t, d)
+	ids, err := d.GetQuestionIDs(quizID)
 	if err != nil {
 		t.Fatalf("GetQuestionIDs (empty): %v", err)
 	}
 	if len(ids) != 0 {
-		t.Errorf("expected 0 IDs on fresh DB, got %d", len(ids))
+		t.Errorf("expected 0 IDs on fresh quiz, got %d", len(ids))
 	}
-	addTestQuestion(t, d)
-	addTestQuestion(t, d)
-	ids, err = d.GetQuestionIDs()
+	addTestQuestion(t, d, quizID)
+	addTestQuestion(t, d, quizID)
+	ids, err = d.GetQuestionIDs(quizID)
 	if err != nil {
 		t.Fatalf("GetQuestionIDs (after add): %v", err)
 	}
 	if len(ids) != 2 {
 		t.Errorf("expected 2 IDs after adding 2 questions, got %d", len(ids))
 	}
+
+	otherQuizID := newTestQuiz(t, d)
+	ids, err = d.GetQuestionIDs(otherQuizID)
+	if err != nil {
+		t.Fatalf("GetQuestionIDs (other quiz): %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected questions to stay scoped to their own quiz, got %d for unrelated quiz", len(ids))
+	}
 }
 
 func TestSubmitAnswer(t *testing.T) {
 	d := newTestDB(t)
 	p, _ := d.CreatePlayer("Alice")
-	qID := addTestQuestion(t, d) // need a real question for FK constraint
+	quizID := newTestQuiz(t, d)
+	qID := addTestQuestion(t, d, quizID) // need a real question for FK constraint
 
 	recorded, err := d.SubmitAnswer(p.ID, qID, 1, true, 500)
 	if err != nil {
@@ -204,22 +230,53 @@ func TestResetGame(t *testing.T) {
 	}
 }
 
+func TestResetGameKeepsQuizLibrary(t *testing.T) {
+	d := newTestDB(t)
+	quizID := newTestQuiz(t, d)
+	addTestQuestion(t, d, quizID)
+	d.CreatePlayer("Alice")
+	code := "ABC123"
+	if err := d.CreateRoom(code, quizID); err != nil {
+		t.Fatalf("CreateRoom: %v", err)
+	}
+
+	if err := d.ResetGame(); err != nil {
+		t.Fatalf("ResetGame: %v", err)
+	}
+
+	questions, err := d.ListQuestionsByQuiz(quizID)
+	if err != nil {
+		t.Fatalf("ListQuestionsByQuiz: %v", err)
+	}
+	if len(questions) != 1 {
+		t.Errorf("expected the quiz's question to survive reset, got %d", len(questions))
+	}
+	state, err := d.GetGameState()
+	if err != nil {
+		t.Fatalf("GetGameState: %v", err)
+	}
+	if state.QuizID != 0 || state.RoomCode != "" {
+		t.Errorf("expected reset to clear the active quiz/room, got %+v", state)
+	}
+}
+
 func TestAddQuestion(t *testing.T) {
 	d := newTestDB(t)
-	before, err := d.ListAllQuestions()
+	quizID := newTestQuiz(t, d)
+	before, err := d.ListQuestionsByQuiz(quizID)
 	if err != nil {
-		t.Fatalf("ListAllQuestions: %v", err)
+		t.Fatalf("ListQuestionsByQuiz: %v", err)
 	}
-	id, err := d.AddQuestion("Custom Q?", []string{"A", "B"}, 0, "custom")
+	id, err := d.AddQuestion(quizID, "Custom Q?", []string{"A", "B"}, 0, "custom")
 	if err != nil {
 		t.Fatalf("AddQuestion: %v", err)
 	}
 	if id <= 0 {
 		t.Errorf("expected positive ID, got %d", id)
 	}
-	after, err := d.ListAllQuestions()
+	after, err := d.ListQuestionsByQuiz(quizID)
 	if err != nil {
-		t.Fatalf("ListAllQuestions: %v", err)
+		t.Fatalf("ListQuestionsByQuiz: %v", err)
 	}
 	if len(after) != len(before)+1 {
 		t.Errorf("expected %d questions, got %d", len(before)+1, len(after))
@@ -228,10 +285,84 @@ func TestAddQuestion(t *testing.T) {
 
 func TestSeedIdempotent(t *testing.T) {
 	d := newTestDB(t)
-	before, _ := d.ListAllQuestions()
+	before, _ := d.ListQuizzes()
 	d.seed()
-	after, _ := d.ListAllQuestions()
+	after, _ := d.ListQuizzes()
 	if len(before) != len(after) {
 		t.Errorf("seed not idempotent: before=%d, after=%d", len(before), len(after))
+	}
+}
+
+func TestQuizCRUD(t *testing.T) {
+	d := newTestDB(t)
+
+	id, err := d.CreateQuiz("Trivia Night")
+	if err != nil {
+		t.Fatalf("CreateQuiz: %v", err)
+	}
+	quiz, err := d.GetQuiz(id)
+	if err != nil {
+		t.Fatalf("GetQuiz: %v", err)
+	}
+	if quiz.Title != "Trivia Night" || quiz.QuestionCount != 0 {
+		t.Errorf("unexpected quiz: %+v", quiz)
+	}
+
+	addTestQuestion(t, d, id)
+	addTestQuestion(t, d, id)
+	quiz, _ = d.GetQuiz(id)
+	if quiz.QuestionCount != 2 {
+		t.Errorf("expected question_count 2, got %d", quiz.QuestionCount)
+	}
+
+	quizzes, err := d.ListQuizzes()
+	if err != nil {
+		t.Fatalf("ListQuizzes: %v", err)
+	}
+	if len(quizzes) != 1 {
+		t.Fatalf("expected 1 quiz, got %d", len(quizzes))
+	}
+
+	if err := d.RenameQuiz(id, "Renamed Night"); err != nil {
+		t.Fatalf("RenameQuiz: %v", err)
+	}
+	quiz, _ = d.GetQuiz(id)
+	if quiz.Title != "Renamed Night" {
+		t.Errorf("expected renamed title, got %q", quiz.Title)
+	}
+
+	dupID, err := d.DuplicateQuiz(id)
+	if err != nil {
+		t.Fatalf("DuplicateQuiz: %v", err)
+	}
+	dup, err := d.GetQuiz(dupID)
+	if err != nil {
+		t.Fatalf("GetQuiz(dup): %v", err)
+	}
+	if dup.Title != "Renamed Night (Copy)" || dup.QuestionCount != 2 {
+		t.Errorf("unexpected duplicate: %+v", dup)
+	}
+
+	if err := d.DeleteQuiz(id); err != nil {
+		t.Fatalf("DeleteQuiz: %v", err)
+	}
+	if _, err := d.GetQuiz(id); err == nil {
+		t.Error("expected error getting deleted quiz")
+	}
+	remaining, _ := d.ListQuestionsByQuiz(id)
+	if len(remaining) != 0 {
+		t.Errorf("expected deleted quiz's questions to be gone, got %d", len(remaining))
+	}
+
+	// The duplicate is untouched by deleting the original.
+	if _, err := d.GetQuiz(dupID); err != nil {
+		t.Errorf("expected duplicate quiz to survive original's deletion: %v", err)
+	}
+}
+
+func TestDeleteQuizNotFound(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.DeleteQuiz(999); err == nil {
+		t.Error("expected error deleting nonexistent quiz")
 	}
 }

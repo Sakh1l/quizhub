@@ -38,28 +38,33 @@ Zero runtime dependencies. One binary. One command. Done.
 │  ADMIN (/admin.html)            PLAYERS (/)                 │
 │                                                             │
 │  1. Enter PIN ──────────┐                                   │
-│  2. Add questions       │                                   │
-│  3. Create Quiz Room ───┼──→ Room Code: A3X7K2              │
+│  2. Create/open a saved  │                                   │
+│     quiz in your library │                                   │
+│  3. Add questions once — │                                   │
+│     it's reusable        │                                   │
+│  4. Host This Quiz ─────┼──→ Room Code: A3X7K2              │
 │     (get code + link)   │    Link: yoursite.com/?room=A3X7K2│
 │                         │                                   │
-│  4. Share code ─────────┼──→ 5. Enter code + name ──→ Join  │
+│  5. Share code ─────────┼──→ 6. Enter code + name ──→ Join  │
 │                         │                                   │
-│  6. See players join    │    7. See lobby + other players    │
-│  8. Click Start Game ───┼──→ 9. 10-sec countdown            │
+│  7. See players join    │    8. See lobby + other players    │
+│  9. Click Start Game ───┼──→ 10. 10-sec countdown            │
 │                         │                                   │
-│  10. See question +     │    11. See question + options      │
+│  11. See question +     │    12. See question + options      │
 │      timer + leaderboard│        Pick answer (locked in)    │
 │      + answer stats     │                                   │
 │                         │                                   │
-│  12. Timer expires ─────┼──→ 13. Correct answer revealed    │
+│  13. Timer expires ─────┼──→ 14. Correct answer revealed    │
 │      (auto-reveal)      │        Score shown                │
 │                         │                                   │
-│  14. Click Next Question┼──→ 15. Next question appears      │
+│  15. Click Next Question┼──→ 16. Next question appears      │
 │      ...repeat...       │        ...repeat...               │
 │                         │                                   │
-│  16. Game Over ─────────┼──→ 17. See personal rank (#1, #2) │
+│  17. Game Over ─────────┼──→ 18. See personal rank (#1, #2) │
 │      Full leaderboard   │                                   │
-│  18. Create New Quiz    │                                   │
+│  19. Back to Library —  │                                   │
+│      quiz is saved for  │                                   │
+│      next time          │                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,22 +72,29 @@ Zero runtime dependencies. One binary. One command. Done.
 
 ## Features
 
+**Quiz Library**
+- Quizzes are saved, reusable entities — create one, add questions once, host it as many times as you like
+- Library screen lists every saved quiz with its question count
+- Edit, rename, duplicate, or delete a quiz at any time
+- Resetting a game session (or finishing one) never deletes your quizzes — only players, answers, and the active room are session-scoped
+
 **Room System**
-- Admin creates a quiz room with a unique 6-character code (e.g., `A3X7K2`)
+- Admin picks a saved quiz and hosts it, generating a unique 6-character room code (e.g., `A3X7K2`)
 - Shareable join link: `yoursite.com/?room=A3X7K2` — pre-fills the code for players
-- One room at a time — simple, no conflicts
+- One room at a time — simple, no conflicts. Trying to host a second quiz while one is already running is rejected with a clear "quiz already in progress" message instead of silently taking over
 
 **Admin Panel** (`/admin.html`)
 - PIN-protected access (default: `1234`)
-- Add custom questions from scratch for each quiz (text, 4 options, correct answer)
+- Browse your quiz library, or create a new quiz
+- Add questions to a quiz (text, 4 options, correct answer) — saved permanently, not just for one session
 - Set question timer (5–120 seconds)
-- Create quiz room → get room code + shareable link
+- Host a quiz → get room code + shareable link
 - See players join in real time
 - Start game → 10-second "Get Ready" countdown
 - During game: see current question, countdown timer, live leaderboard, answer stats (correct/wrong count)
 - Advance to next question manually (admin controls pacing)
 - Game over: see full final leaderboard
-- Create new quiz (resets everything for a fresh start)
+- Back to Library — the quiz you just ran is still there, ready to host again
 
 **Player Experience** (`/`)
 - Enter room code + nickname to join
@@ -202,11 +214,13 @@ Output: `QuizHub v1.0.0 running on http://localhost:8080`
 ### 4. Run a quiz
 
 1. **Admin**: Open `/admin.html` → enter PIN `1234`
-2. **Admin**: Add a few questions using the form
-3. **Admin**: Click **Create Quiz Room** → copy the room code
-4. **Players**: Open `/` → enter room code + nickname → click **Join Room**
-5. **Admin**: Click **Start Game** when everyone's in
-6. **Everyone**: Answer questions, watch scores, have fun!
+2. **Admin**: Click **New Quiz**, give it a title
+3. **Admin**: Add a few questions using the form (saved to that quiz permanently)
+4. **Admin**: Click **Host This Quiz** → copy the room code
+5. **Players**: Open `/` → enter room code + nickname → click **Join Room**
+6. **Admin**: Click **Start Game** when everyone's in
+7. **Everyone**: Answer questions, watch scores, have fun!
+8. **Admin**: Back to Library when done — the quiz is still there for next time
 
 ---
 
@@ -354,29 +368,35 @@ docker compose up -d
 ```
 1. Go to /admin.html
 2. Enter admin PIN (default: 1234)
-3. Add questions:
+3. Your Quizzes (library):
+   - Click "New Quiz", give it a title → opens the editor
+   - Or click "Edit" on an existing quiz to add more questions
+   - "Duplicate" clones a quiz (and its questions) as a starting point
+   - "Delete" removes a quiz and its questions permanently
+4. In the editor, add questions:
    - Type question text
    - Fill in 4 options (A, B, C, D)
    - Select the correct answer
    - Click "Add Question"
-   - Repeat for all questions
-4. Set question timer (default: 15 seconds)
-5. Click "Create Quiz Room"
+   - Repeat for all questions — these are saved to the quiz, not the session
+5. Set question timer (default: 15 seconds)
+6. Click "Host This Quiz"
    → Room code appears (e.g., A3X7K2)
    → Shareable link appears (e.g., yoursite.com/?room=A3X7K2)
    → Copy and share with players
-6. Watch players join in real time
-7. Click "Start Game" when everyone's in
+7. Watch players join in real time
+8. Click "Start Game" when everyone's in
    → 10-second "Get Ready" countdown begins
-8. During each question:
+9. During each question:
    - See the question + countdown timer
    - See live answer stats (how many answered, correct vs wrong)
    - See live leaderboard (updates as answers come in)
-9. When timer expires:
-   - Correct answer is revealed automatically
-   - Click "Next Question" to advance
-10. After last question: see final leaderboard
-11. Click "Create New Quiz" to start fresh
+10. When timer expires:
+    - Correct answer is revealed automatically
+    - Click "Next Question" to advance
+11. After last question: see final leaderboard
+12. Click "Back to Library" — players/scores/room are cleared, but the quiz
+    itself stays in your library, ready to host again
 ```
 
 ### Player Flow
@@ -426,7 +446,6 @@ All endpoints are prefixed with `/api`. JSON request/response bodies.
 | `POST` | `/api/answer` | Submit answer | `{"player_id":"...","question_id":N,"answer":N}` |
 | `GET` | `/api/leaderboard` | Sorted rankings | — |
 | `GET` | `/api/room/info?code=X` | Check if room exists | Query: `code` |
-| `GET` | `/api/questions` | List all questions | — |
 
 ### Admin Endpoints (require `X-Admin-Token` header)
 
@@ -442,13 +461,20 @@ curl -X POST /api/admin/auth \
 | Method | Path | Description | Body |
 |--------|------|-------------|------|
 | `POST` | `/api/admin/auth` | Get admin token | `{"pin":"1234"}` |
-| `POST` | `/api/questions/add` | Add a question | `{"text":"...","options":["A","B","C","D"],"answer":1,"category":"math"}` |
+| `GET` | `/api/admin/quizzes` | List your saved quizzes | — |
+| `POST` | `/api/admin/quizzes` | Create a quiz | `{"title":"..."}` |
+| `POST` | `/api/admin/quizzes/rename` | Rename a quiz | `{"id":1,"title":"..."}` |
+| `POST` | `/api/admin/quizzes/duplicate` | Duplicate a quiz + its questions | `{"id":1}` |
+| `POST` | `/api/admin/quizzes/delete` | Delete a quiz + its questions | `{"id":1}` |
+| `GET` | `/api/admin/quizzes/questions?quiz_id=X` | List a quiz's questions | Query: `quiz_id` |
+| `POST` | `/api/admin/quizzes/questions` | Add a question to a quiz | `{"quiz_id":1,"text":"...","options":["A","B","C","D"],"answer":1,"category":"math"}` |
 | `POST` | `/api/questions/delete` | Delete a question | `{"id":1}` |
+| `POST` | `/api/questions` | Stage a specific question subset/order for the next game (optional — defaults to the whole quiz) | `{"ids":[3,1,2]}` |
 | `POST` | `/api/admin/timer` | Set timer (5-120s) | `{"time_limit":20}` |
-| `POST` | `/api/room/create` | Create quiz room | — → `{"room_code":"A3X7K2","link":"..."}` |
+| `POST` | `/api/room/create` | Host a saved quiz, creating a room. Only one room can be active at a time — returns `409` with a "quiz already running" message if one exists; reset the session first. | `{"quiz_id":1}` → `{"room_code":"A3X7K2","link":"..."}` |
 | `POST` | `/api/game/start` | Start game (10s countdown) | — |
 | `POST` | `/api/game/next` | Advance from reveal to next question, or finish after the last question | — |
-| `POST` | `/api/game/reset` | Reset everything | — |
+| `POST` | `/api/game/reset` | Clear players/answers/room and return to lobby (quizzes are untouched) | — |
 
 ### WebSocket
 

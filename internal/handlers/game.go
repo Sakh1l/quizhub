@@ -145,10 +145,19 @@ func (h *Handler) SetTimer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) StartGame(w http.ResponseWriter, r *http.Request) {
+	state, err := h.DB.GetGameState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load game state")
+		return
+	}
+	if state.QuizID == 0 {
+		writeError(w, http.StatusBadRequest, "no quiz selected — create a room first")
+		return
+	}
+
 	ids := h.getStagedQuestionIDs()
 	if len(ids) == 0 {
-		var err error
-		ids, err = h.DB.GetQuestionIDs()
+		ids, err = h.DB.GetQuestionIDs(state.QuizID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to load questions")
 			return

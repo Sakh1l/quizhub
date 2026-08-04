@@ -113,8 +113,34 @@ func (h *Handler) RoomInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QuizID int `json:"quiz_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.QuizID <= 0 {
+		writeError(w, http.StatusBadRequest, "quiz_id is required")
+		return
+	}
+
+	// This build supports one room at a time (see ROADMAP.md M2 for
+	// multi-room). Refuse a second room instead of silently clobbering
+	// whatever's already running.
+	if h.DB.GetRoomCode() != "" {
+		writeError(w, http.StatusConflict, "a quiz is already running — please wait for it to finish, or ask the host to reset the session before starting a new one")
+		return
+	}
+
+	quiz, err := h.DB.GetQuiz(req.QuizID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "quiz not found")
+		return
+	}
+	if quiz.QuestionCount == 0 {
+		writeError(w, http.StatusBadRequest, "quiz has no questions")
+		return
+	}
+
 	code := generateRoomCode()
-	if err := h.DB.CreateRoom(code); err != nil {
+	if err := h.DB.CreateRoom(code, req.QuizID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create room")
 		return
 	}

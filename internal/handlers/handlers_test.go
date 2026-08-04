@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/sakh1l/quizhub/internal/db"
@@ -71,14 +72,10 @@ func TestCreateRoomAndJoin(t *testing.T) {
 	mux := newMux(t)
 	tok := adminToken(t, mux)
 
-	w := reqJSON(mux, http.MethodPost, "/api/questions/add", map[string]any{
-		"text": "1+1?", "options": []string{"0", "1", "2", "3"}, "answer": 2, "category": "math",
-	}, tok)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("add question status=%d body=%s", w.Code, w.Body.String())
-	}
+	quizID := createQuiz(t, mux, tok, "Trivia")
+	addQuestion(t, mux, tok, quizID, "1+1?", []string{"0", "1", "2", "3"}, 2)
 
-	w = reqJSON(mux, http.MethodPost, "/api/room/create", nil, tok)
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizID}, tok)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create room status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -95,29 +92,57 @@ func TestCreateRoomAndJoin(t *testing.T) {
 	}
 }
 
-func TestResetGameClearsSessionData(t *testing.T) {
+func TestCreateRoomRequiresNonEmptyQuiz(t *testing.T) {
 	mux := newMux(t)
 	tok := adminToken(t, mux)
 
-	w := reqJSON(mux, http.MethodPost, "/api/questions/add", map[string]any{
-		"text": "1+1?", "options": []string{"0", "1", "2", "3"}, "answer": 2, "category": "math",
-	}, tok)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("add question status=%d body=%s", w.Code, w.Body.String())
-	}
-	var question struct {
-		ID int `json:"id"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &question); err != nil || question.ID == 0 {
-		t.Fatalf("decode question id: %v body=%s", err, w.Body.String())
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", nil, tok)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 with no quiz_id, got %d body=%s", w.Code, w.Body.String())
 	}
 
-	w = reqJSON(mux, http.MethodPost, "/api/questions", map[string]any{"ids": []int{question.ID}}, tok)
+	quizID := createQuiz(t, mux, tok, "Empty Quiz")
+	w = reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizID}, tok)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for quiz with no questions, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateRoomRejectsWhileAnotherIsActive(t *testing.T) {
+	mux := newMux(t)
+	tok := adminToken(t, mux)
+
+	quizA := createQuiz(t, mux, tok, "Quiz A")
+	addQuestion(t, mux, tok, quizA, "Q1?", []string{"A", "B"}, 0)
+	createRoom(t, mux, tok, quizA)
+
+	quizB := createQuiz(t, mux, tok, "Quiz B")
+	addQuestion(t, mux, tok, quizB, "Q2?", []string{"A", "B"}, 0)
+
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizB}, tok)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while a quiz is already running, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Resetting the session frees things up to host a new quiz.
+	w = reqJSON(mux, http.MethodPost, "/api/game/reset", nil, tok)
 	if w.Code != http.StatusOK {
-		t.Fatalf("select questions status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("reset status=%d body=%s", w.Code, w.Body.String())
 	}
+	w = reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizB}, tok)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected room creation to succeed after reset, got %d body=%s", w.Code, w.Body.String())
+	}
+}
 
-	w = reqJSON(mux, http.MethodPost, "/api/room/create", nil, tok)
+func TestResetGameClearsSessionDataButKeepsQuizzes(t *testing.T) {
+	mux := newMux(t)
+	tok := adminToken(t, mux)
+
+	quizID := createQuiz(t, mux, tok, "Trivia")
+	addQuestion(t, mux, tok, quizID, "1+1?", []string{"0", "1", "2", "3"}, 2)
+
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizID}, tok)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create room status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -146,7 +171,9 @@ func TestResetGameClearsSessionData(t *testing.T) {
 		t.Fatalf("expected no players after reset, got %d", len(players))
 	}
 
-	w = reqJSON(mux, http.MethodGet, "/api/questions", nil, "")
+	// The quiz and its question survive reset — it's a reusable library, not
+	// session-scoped scratch data.
+	w = reqJSON(mux, http.MethodGet, "/api/admin/quizzes/questions?quiz_id="+strconv.Itoa(quizID), nil, tok)
 	if w.Code != http.StatusOK {
 		t.Fatalf("questions status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -154,8 +181,8 @@ func TestResetGameClearsSessionData(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &questions); err != nil {
 		t.Fatalf("decode questions: %v", err)
 	}
-	if len(questions) != 0 {
-		t.Fatalf("expected no questions after reset, got %d", len(questions))
+	if len(questions) != 1 {
+		t.Fatalf("expected the quiz's question to survive reset, got %d", len(questions))
 	}
 
 	w = reqJSON(mux, http.MethodGet, "/api/game/state", nil, "")
@@ -170,9 +197,10 @@ func TestResetGameClearsSessionData(t *testing.T) {
 		t.Fatalf("unexpected state after reset: %+v", state)
 	}
 
+	// No quiz is active after reset, so starting a game is rejected.
 	w = reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected cleared selected question cache, start status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("expected start to be rejected with no active quiz, status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -202,9 +230,10 @@ func TestAnswerPayloadAndTimeBasedScoring(t *testing.T) {
 	mux, h := newTestHandler(t)
 	tok := adminToken(t, mux)
 
-	qID := addQuestion(t, mux, tok, "2+2?", []string{"1", "2", "4", "8"}, 2)
+	quizID := createQuiz(t, mux, tok, "Trivia")
+	qID := addQuestion(t, mux, tok, quizID, "2+2?", []string{"1", "2", "4", "8"}, 2)
 	selectQuestions(t, mux, tok, []int{qID})
-	code := createRoom(t, mux, tok)
+	code := createRoom(t, mux, tok, quizID)
 	player := joinPlayer(t, mux, code, "Alice")
 
 	w := reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
@@ -243,11 +272,12 @@ func TestSelectedQuestionOrderAndRevealState(t *testing.T) {
 	mux, h := newTestHandler(t)
 	tok := adminToken(t, mux)
 
-	first := addQuestion(t, mux, tok, "First?", []string{"A", "B"}, 0)
-	second := addQuestion(t, mux, tok, "Second?", []string{"A", "B"}, 1)
-	third := addQuestion(t, mux, tok, "Third?", []string{"A", "B"}, 0)
+	quizID := createQuiz(t, mux, tok, "Trivia")
+	first := addQuestion(t, mux, tok, quizID, "First?", []string{"A", "B"}, 0)
+	second := addQuestion(t, mux, tok, quizID, "Second?", []string{"A", "B"}, 1)
+	third := addQuestion(t, mux, tok, quizID, "Third?", []string{"A", "B"}, 0)
 	selectQuestions(t, mux, tok, []int{second, first})
-	code := createRoom(t, mux, tok)
+	code := createRoom(t, mux, tok, quizID)
 	_ = joinPlayer(t, mux, code, "Bob")
 
 	w := reqJSON(mux, http.MethodPost, "/api/game/start", nil, tok)
@@ -290,14 +320,96 @@ func TestSelectedQuestionOrderAndRevealState(t *testing.T) {
 	}
 }
 
+func TestQuizLibraryCRUD(t *testing.T) {
+	mux := newMux(t)
+	tok := adminToken(t, mux)
+
+	quizID := createQuiz(t, mux, tok, "Original Title")
+	addQuestion(t, mux, tok, quizID, "Q1?", []string{"A", "B"}, 0)
+
+	w := reqJSON(mux, http.MethodGet, "/api/admin/quizzes", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list quizzes status=%d body=%s", w.Code, w.Body.String())
+	}
+	var quizzes []struct {
+		ID            int    `json:"id"`
+		Title         string `json:"title"`
+		QuestionCount int    `json:"question_count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &quizzes); err != nil {
+		t.Fatalf("decode quizzes: %v", err)
+	}
+	if len(quizzes) != 1 || quizzes[0].QuestionCount != 1 {
+		t.Fatalf("unexpected quiz list: %+v", quizzes)
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/admin/quizzes/rename", map[string]any{"id": quizID, "title": "Renamed"}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rename status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/admin/quizzes/duplicate", map[string]any{"id": quizID}, tok)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("duplicate status=%d body=%s", w.Code, w.Body.String())
+	}
+	var dup struct {
+		ID            int    `json:"id"`
+		Title         string `json:"title"`
+		QuestionCount int    `json:"question_count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &dup); err != nil {
+		t.Fatalf("decode duplicate: %v", err)
+	}
+	if dup.Title != "Renamed (Copy)" || dup.QuestionCount != 1 {
+		t.Fatalf("unexpected duplicate: %+v", dup)
+	}
+
+	w = reqJSON(mux, http.MethodPost, "/api/admin/quizzes/delete", map[string]any{"id": quizID}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = reqJSON(mux, http.MethodGet, "/api/admin/quizzes", nil, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list quizzes status=%d body=%s", w.Code, w.Body.String())
+	}
+	quizzes = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &quizzes)
+	if len(quizzes) != 1 || quizzes[0].ID != dup.ID {
+		t.Fatalf("expected only the duplicate to remain: %+v", quizzes)
+	}
+}
+
+func TestQuizzesRequireAdmin(t *testing.T) {
+	mux := newMux(t)
+	if w := reqJSON(mux, http.MethodGet, "/api/admin/quizzes", nil, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", w.Code)
+	}
+}
+
 type joinedPlayer struct {
 	PlayerID string `json:"player_id"`
 }
 
-func addQuestion(t *testing.T, mux *http.ServeMux, token, text string, options []string, answer int) int {
+func createQuiz(t *testing.T, mux *http.ServeMux, token, title string) int {
 	t.Helper()
-	w := reqJSON(mux, http.MethodPost, "/api/questions/add", map[string]any{
-		"text": text, "options": options, "answer": answer, "category": "test",
+	w := reqJSON(mux, http.MethodPost, "/api/admin/quizzes", map[string]any{"title": title}, token)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create quiz status=%d body=%s", w.Code, w.Body.String())
+	}
+	var q struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &q); err != nil {
+		t.Fatalf("decode quiz: %v", err)
+	}
+	return q.ID
+}
+
+func addQuestion(t *testing.T, mux *http.ServeMux, token string, quizID int, text string, options []string, answer int) int {
+	t.Helper()
+	w := reqJSON(mux, http.MethodPost, "/api/admin/quizzes/questions", map[string]any{
+		"quiz_id": quizID, "text": text, "options": options, "answer": answer, "category": "test",
 	}, token)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("add question status=%d body=%s", w.Code, w.Body.String())
@@ -319,9 +431,9 @@ func selectQuestions(t *testing.T, mux *http.ServeMux, token string, ids []int) 
 	}
 }
 
-func createRoom(t *testing.T, mux *http.ServeMux, token string) string {
+func createRoom(t *testing.T, mux *http.ServeMux, token string, quizID int) string {
 	t.Helper()
-	w := reqJSON(mux, http.MethodPost, "/api/room/create", nil, token)
+	w := reqJSON(mux, http.MethodPost, "/api/room/create", map[string]int{"quiz_id": quizID}, token)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create room status=%d body=%s", w.Code, w.Body.String())
 	}
