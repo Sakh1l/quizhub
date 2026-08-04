@@ -182,6 +182,127 @@ body::before {
   .admin-layout { grid-template-columns: 1fr; }
 }
 
+/* Game View: question header, timer, options, countdown */
+.question-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.question-counter {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.timer-number {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--bg-secondary);
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+}
+
+.timer-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-secondary);
+  border-radius: 2px;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.timer-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 1s linear, background-color 0.3s;
+}
+
+.timer-fill.warning { background: var(--warning); }
+.timer-fill.critical { background: var(--danger); }
+
+.question-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 1.25rem;
+}
+
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.option-btn {
+  display: flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.option-btn.correct {
+  border-color: var(--correct);
+  background: rgba(6, 214, 160, 0.12);
+}
+
+.option-btn.disabled { opacity: 0.85; }
+
+.option-btn .option-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-right: 0.65rem;
+  flex-shrink: 0;
+}
+
+.option-btn.correct .option-label {
+  background: var(--correct);
+  color: var(--bg-primary);
+}
+
+.countdown-circle {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  border: 4px solid var(--admin-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 2rem auto;
+  animation: pulse 1s ease infinite;
+}
+
+.countdown-number {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--admin-accent);
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@media (max-width: 640px) {
+  .options-grid { grid-template-columns: 1fr; }
+}
+
 /* PIN Screen */
 .pin-screen {
   max-width: 400px;
