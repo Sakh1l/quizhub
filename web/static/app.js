@@ -1,7 +1,7 @@
-/* =========================================================
+/*
    QuizHub Player - app.js
-   Landing page: Enter room code + name to join.
-   ========================================================= */
+   Live multiplayer quiz participant experience.
+*/
 (function () {
   'use strict';
 
@@ -23,6 +23,8 @@
   let reconnectTimer = null;
   let answerSubmitted = false;
   let roomCode = '';
+  let joinInFlight = false;
+  let toastTimer = null;
 
   const API = '';
   const $ = (sel) => document.querySelector(sel);
@@ -32,40 +34,68 @@
     if (attrs) {
       Object.entries(attrs).forEach(([k, v]) => {
         if (k === 'className') node.className = v;
+        else if (k === 'textContent') node.textContent = v;
         else if (k.startsWith('data-')) node.setAttribute(k, v);
         else if (k === 'onclick') node.addEventListener('click', v);
         else if (k === 'disabled') node.disabled = v;
+        else if (k === 'aria-live') node.setAttribute('aria-live', v);
+        else if (k === 'htmlFor') node.htmlFor = v;
         else node.setAttribute(k, v);
       });
     }
-    children.flat().forEach(c => {
-      if (c == null) return;
-      node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    children.flat().forEach((child) => {
+      if (child == null) return;
+      node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
     });
     return node;
   }
 
+  function notify(message, tone = 'neutral') {
+    let toast = $('[data-testid="player-toast"]');
+    if (!toast) {
+      toast = el('div', { className: 'toast', 'data-testid': 'player-toast', role: 'status', 'aria-live': 'polite' });
+      document.body.appendChild(toast);
+    }
+    toast.className = `toast ${tone}`;
+    toast.textContent = message;
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 3600);
+  }
+
   async function api(path, opts = {}) {
-    const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
-    const data = await res.json();
+    const res = await fetch(API + path, {
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      ...opts,
+    });
+    const raw = await res.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = { error: raw || 'Request failed' }; }
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
 
   // ---- WebSocket ----
   function connectWS() {
-    if (socket && socket.readyState <= 1) return;
+    if (!playerId || (socket && socket.readyState <= 1)) return;
+    clearTimeout(reconnectTimer);
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/api/ws?role=player&player_id=${playerId || ''}`;
-    try { socket = new WebSocket(url); } catch (_) { reconnectTimer = setTimeout(connectWS, 5000); return; }
+    const url = `${proto}//${location.host}/api/ws?role=player&player_id=${encodeURIComponent(playerId)}`;
+    try { socket = new WebSocket(url); } catch (_) { scheduleReconnect(); return; }
     socket.onopen = () => clearTimeout(reconnectTimer);
     socket.onmessage = (evt) => { try { handleWS(JSON.parse(evt.data)); } catch (_) {} };
-    socket.onclose = () => { reconnectTimer = setTimeout(connectWS, 5000); };
+    socket.onclose = () => { socket = null; scheduleReconnect(); };
     socket.onerror = () => { try { socket.close(); } catch (_) {} };
+  }
+
+  function scheduleReconnect() {
+    if (!playerId || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWS(); }, 5000);
   }
 
   function disconnectWS() {
     clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     if (socket) { try { socket.close(); } catch (_) {} socket = null; }
   }
 
@@ -115,17 +145,14 @@
       case 'player_kicked':
         resetAll();
         render();
-        setTimeout(() => {
-          const err = $('[data-testid="join-error"]');
-          if (err) err.textContent = 'You were removed from the game';
-        }, 100);
+        notify('You were removed from the game.', 'error');
         break;
       case 'players_update':
         updatePlayerList(msg.data);
         break;
       case 'leaderboard_update':
         if (gameStatus === 'finished' && msg.data) {
-          const me = msg.data.find(e => e.player_id === playerId);
+          const me = msg.data.find((entry) => entry.player_id === playerId);
           if (me) { myRank = me.rank; myResult = { ...myResult, total_score: me.score }; render(); }
         }
         break;
@@ -135,6 +162,7 @@
   function resetAll() {
     playerId = null;
     playerNickname = '';
+    roomCode = '';
     gameStatus = 'join';
     currentQuestion = null;
     selectedAnswer = null;
@@ -149,7 +177,7 @@
   async function fetchMyRank() {
     try {
       const lb = await api('/api/leaderboard');
-      const me = lb.find(e => e.player_id === playerId);
+      const me = lb.find((entry) => entry.player_id === playerId);
       if (me) { myRank = me.rank; myResult = { ...myResult, total_score: me.score }; render(); }
     } catch (_) {}
   }
@@ -171,12 +199,16 @@
       const fill = $('[data-testid="timer-fill"]');
       if (fill) {
         const pct = Math.max(0, (timeLeft / timeLimit) * 100);
-        fill.style.width = pct + '%';
+        fill.style.width = `${pct}%`;
         fill.classList.toggle('warning', timeLeft <= 5 && timeLeft > 2);
         fill.classList.toggle('critical', timeLeft <= 2);
       }
       const num = $('[data-testid="timer-number"]');
-      if (num) num.textContent = Math.max(0, timeLeft) + 's';
+      if (num) {
+        num.textContent = `${Math.max(0, timeLeft)}s`;
+        num.setAttribute('aria-valuenow', String(Math.max(0, timeLeft)));
+        num.setAttribute('aria-label', `${Math.max(0, timeLeft)} seconds remaining`);
+      }
       if (timeLeft <= 0) clearInterval(timerInterval);
     }, 1000);
   }
@@ -185,11 +217,17 @@
   function render() {
     const app = $('#app');
     app.innerHTML = '';
-
     app.appendChild(el('header', { className: 'header' },
-      el('h1', null, 'QuizHub'),
-      el('p', null, playerId ? `Playing as ${playerNickname}` : 'Real-time multiplayer trivia')
-    ));
+      el('div', { className: 'brand-lockup' },
+        el('div', { className: 'brand-mark', 'aria-hidden': 'true' }, 'Q'),
+        el('div', null,
+          el('h1', null, 'QuizHub'),
+          el('p', null, playerId ? `Playing as ${playerNickname}` : 'Real-time multiplayer trivia'))),
+      playerId
+        ? el('div', { className: 'session-pill' },
+            el('span', { className: 'live-dot', 'aria-hidden': 'true' }),
+            el('span', null, `Room ${roomCode}`))
+        : el('a', { className: 'header-link', href: '/admin.html' }, 'Host a quiz')));
 
     if (gameStatus === 'join') renderJoin(app);
     else if (gameStatus === 'lobby') renderLobby(app);
@@ -199,51 +237,54 @@
   }
 
   function renderJoin(app) {
-    // Pre-fill room code from URL
     const urlRoom = new URLSearchParams(location.search).get('room') || '';
-
-    const card = el('div', { className: 'card join-screen', 'data-testid': 'join-screen' },
-      el('h2', null, 'Join a Quiz'),
-      el('p', { className: 'subtitle' }, 'Enter the room code and your name'),
+    const card = el('section', { className: 'card join-screen', 'data-testid': 'join-screen' },
+      el('div', { className: 'eyebrow' }, 'PLAYER ENTRY'),
+      el('h2', null, 'Join the arena'),
+      el('p', { className: 'subtitle' }, 'Enter the room code from your host. No account needed.'),
       el('div', { className: 'join-fields' },
-        el('input', { id: 'room-input', type: 'text', placeholder: 'Room Code (e.g. A3X7K2)', 'data-testid': 'room-input', maxlength: '10', value: urlRoom }),
-        el('input', { id: 'nickname-input', type: 'text', placeholder: 'Your Nickname', 'data-testid': 'nickname-input', maxlength: '30' }),
-        el('button', { className: 'btn btn-primary', 'data-testid': 'join-btn', onclick: handleJoin, style: 'width:100%' }, 'Join Room'),
+        el('label', { htmlFor: 'room-input' }, 'Room code', el('span', { className: 'label-hint' }, '6 characters')),
+        el('input', { id: 'room-input', type: 'text', placeholder: 'e.g. A3X7K2', 'data-testid': 'room-input', maxlength: '10', autocomplete: 'off', autocapitalize: 'characters', value: urlRoom, 'aria-describedby': 'join-helper' }),
+        el('label', { htmlFor: 'nickname-input' }, 'Your display name'),
+        el('input', { id: 'nickname-input', type: 'text', placeholder: 'What should we call you?', 'data-testid': 'nickname-input', maxlength: '30', autocomplete: 'nickname' }),
+        el('button', { className: 'btn btn-primary btn-large', 'data-testid': 'join-btn', onclick: handleJoin, disabled: false }, 'Join room', el('span', { className: 'btn-arrow', 'aria-hidden': 'true' }, '→')),
       ),
-      el('p', { className: 'error-msg', 'data-testid': 'join-error' })
+      el('p', { id: 'join-helper', className: 'helper-text' }, 'Your host controls the pace. You answer, climb the leaderboard, and have fun.'),
+      el('p', { className: 'error-msg', 'data-testid': 'join-error', role: 'alert' })
     );
     app.appendChild(card);
+    app.appendChild(el('div', { className: 'feature-strip' },
+      el('div', null, el('strong', null, 'LIVE'), el('span', null, 'Answers sync instantly')),
+      el('div', null, el('strong', null, 'FAST'), el('span', null, 'Speed earns points')),
+      el('div', null, el('strong', null, 'SIMPLE'), el('span', null, 'No sign-up required'))));
 
     setTimeout(() => {
       const roomInp = $('#room-input');
       const nameInp = $('#nickname-input');
-      if (urlRoom && nameInp) nameInp.focus();
-      else if (roomInp) roomInp.focus();
-
+      if (urlRoom && nameInp) nameInp.focus(); else if (roomInp) roomInp.focus();
       if (nameInp) nameInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleJoin(); });
       if (roomInp) roomInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInp?.focus(); });
-    }, 50);
+    }, 0);
   }
 
   async function handleJoin() {
+    if (joinInFlight) return;
     const roomInp = $('#room-input');
     const nameInp = $('#nickname-input');
     const errorEl = $('[data-testid="join-error"]');
     const btn = $('[data-testid="join-btn"]');
-
     const code = roomInp.value.trim().toUpperCase();
     const nickname = nameInp.value.trim();
 
-    if (!code) { errorEl.textContent = 'Enter a room code'; roomInp.focus(); return; }
-    if (!nickname) { errorEl.textContent = 'Enter your nickname'; nameInp.focus(); return; }
+    if (!code) { errorEl.textContent = 'Enter a room code to continue.'; roomInp.focus(); return; }
+    if (!nickname) { errorEl.textContent = 'Add a display name to join.'; nameInp.focus(); return; }
 
-    btn.disabled = true; btn.textContent = 'Joining...'; errorEl.textContent = '';
-
+    joinInFlight = true;
+    btn.disabled = true;
+    btn.innerHTML = 'Joining…';
+    errorEl.textContent = '';
     try {
-      const data = await api('/api/join', {
-        method: 'POST',
-        body: JSON.stringify({ nickname, room_code: code }),
-      });
+      const data = await api('/api/join', { method: 'POST', body: JSON.stringify({ nickname, room_code: code }) });
       playerId = data.player_id;
       playerNickname = nickname;
       roomCode = code;
@@ -251,59 +292,71 @@
       connectWS();
       render();
     } catch (err) {
-      errorEl.textContent = err.message || 'Failed to join';
-      btn.disabled = false; btn.textContent = 'Join Room';
-    }
+      errorEl.textContent = err.message || 'Could not join this room.';
+      btn.disabled = false;
+      btn.innerHTML = 'Join room <span class="btn-arrow" aria-hidden="true">→</span>';
+    } finally { joinInFlight = false; }
   }
 
   function renderLobby(app) {
-    const card = el('div', { className: 'card lobby-screen', 'data-testid': 'lobby-screen' },
-      el('h2', null, 'You\'re In!'),
-      el('p', { className: 'lobby-info' }, 'Waiting for the host to start the game...'),
-      el('ul', { className: 'player-list', 'data-testid': 'player-list' }),
-      el('div', { className: 'waiting' }, el('div', { className: 'spinner' }))
+    const card = el('section', { className: 'card lobby-screen', 'data-testid': 'lobby-screen' },
+      el('div', { className: 'lobby-hero' },
+        el('div', { className: 'eyebrow' }, 'YOU’RE IN'),
+        el('h2', null, 'The room is warming up'),
+        el('p', { className: 'subtitle' }, 'Keep this screen open. The host will start the first round when everyone is ready.')),
+      el('div', { className: 'lobby-code' }, el('span', null, 'ROOM'), el('strong', null, roomCode)),
+      el('div', { className: 'players-heading' }, el('h3', null, 'Players in the room'), el('span', { className: 'badge', 'data-testid': 'player-count-badge' }, '0')),
+      el('ul', { className: 'player-list', 'data-testid': 'player-list', 'aria-live': 'polite' }),
+      el('div', { className: 'waiting-message' }, el('div', { className: 'pulse-ring', 'aria-hidden': 'true' }), el('span', null, 'Waiting for the host to start…'))
     );
     app.appendChild(card);
-    api('/api/players').then(players => updatePlayerList(players)).catch(() => {});
+    api('/api/players').then(updatePlayerList).catch(() => {});
   }
 
   function updatePlayerList(players) {
     const list = $('[data-testid="player-list"]');
+    const badge = $('[data-testid="player-count-badge"]');
     if (!list) return;
     list.innerHTML = '';
-    (players || []).forEach(p => {
+    const safePlayers = players || [];
+    safePlayers.forEach((p) => {
       const isYou = p.player_id === playerId;
-      list.appendChild(el('li', { className: 'player-chip' + (isYou ? ' you' : ''), 'data-testid': 'player-chip' },
-        p.nickname + (isYou ? ' (you)' : '')));
+      list.appendChild(el('li', { className: `player-chip${isYou ? ' you' : ''}`, 'data-testid': 'player-chip' },
+        el('span', { className: 'avatar-dot', 'aria-hidden': 'true' }, (p.nickname || '?').charAt(0).toUpperCase()),
+        el('span', null, p.nickname), isYou ? el('span', { className: 'you-tag' }, 'YOU') : null));
     });
+    if (badge) badge.textContent = String(safePlayers.length);
   }
 
   function renderCountdown(app) {
-    app.appendChild(el('div', { className: 'card countdown-screen', 'data-testid': 'countdown-screen' },
-      el('h2', null, 'Get Ready!'),
-      el('p', { className: 'subtitle' }, `${totalQuestions} questions coming up`),
-      el('div', { className: 'countdown-circle' },
+    app.appendChild(el('section', { className: 'card countdown-screen', 'data-testid': 'countdown-screen' },
+      el('div', { className: 'eyebrow' }, 'NEXT UP'),
+      el('h2', null, 'Get ready to play'),
+      el('p', { className: 'subtitle' }, `${totalQuestions} questions · fastest correct answers score more`),
+      el('div', { className: 'countdown-circle', 'aria-live': 'assertive' },
         el('span', { className: 'countdown-number', 'data-testid': 'countdown-number' }, String(Math.max(0, countdownLeft)))),
-    ));
+      el('p', { className: 'countdown-note' }, 'Eyes on the question. Fingers ready.')));
   }
 
   function renderQuestion(app) {
     const q = currentQuestion;
-    if (!q) { app.appendChild(el('div', { className: 'card waiting' }, el('div', { className: 'spinner' }), el('p', null, 'Loading...'))); return; }
-
+    if (!q) { app.appendChild(el('section', { className: 'card waiting' }, el('div', { className: 'spinner' }), el('p', null, 'Loading the next question…'))); return; }
     const optLabels = ['A', 'B', 'C', 'D', 'E', 'F'];
     const isReveal = gameStatus === 'reveal';
+    const progress = totalQuestions ? ((questionIndex + 1) / totalQuestions) * 100 : 0;
+    const timerTone = timeLeft <= 2 ? 'critical' : timeLeft <= 5 ? 'warning' : '';
 
-    const card = el('div', { className: 'card question-screen', 'data-testid': 'question-screen' },
-      el('div', { className: 'question-meta' },
-        el('span', { className: 'question-counter', 'data-testid': 'question-counter' }, `Question ${questionIndex + 1} of ${totalQuestions}`),
-        el('span', { className: 'timer-number', 'data-testid': 'timer-number' }, isReveal ? 'Time\'s up!' : (timeLeft + 's')),
-      ),
-      el('div', { className: 'timer-bar' },
-        el('div', { className: 'timer-fill' + (isReveal ? ' critical' : ''), id: 'timer-fill', 'data-testid': 'timer-fill',
-          style: isReveal ? 'width:0%' : `width:${Math.max(0, (timeLeft / timeLimit) * 100)}%` })),
-      el('p', { className: 'question-text', 'data-testid': 'question-text' }, q.text),
-      el('div', { className: 'options-grid', 'data-testid': 'options-grid' },
+    const card = el('section', { className: 'card question-screen', 'data-testid': 'question-screen' },
+      el('div', { className: 'question-topline' },
+        el('div', null,
+          el('div', { className: 'eyebrow' }, 'LIVE QUESTION'),
+          el('span', { className: 'question-counter', 'data-testid': 'question-counter' }, `${questionIndex + 1} / ${totalQuestions}`)),
+        el('div', { className: `timer-number ${timerTone}`, 'data-testid': 'timer-number', 'aria-label': isReveal ? 'Time is up' : `${timeLeft} seconds remaining` }, isReveal ? 'Time’s up' : `${timeLeft}s`)),
+      el('div', { className: 'progress-track', 'aria-hidden': 'true' }, el('div', { className: 'progress-fill', style: `width:${progress}%` })),
+      el('div', { className: 'timer-bar', role: 'progressbar', 'aria-label': 'Time remaining', 'aria-valuemin': '0', 'aria-valuemax': String(timeLimit), 'aria-valuenow': String(Math.max(0, timeLeft)) },
+        el('div', { className: `timer-fill ${isReveal ? 'critical' : timerTone}`, id: 'timer-fill', 'data-testid': 'timer-fill', style: isReveal ? 'width:0%' : `width:${Math.max(0, (timeLeft / timeLimit) * 100)}%` })),
+      el('h2', { className: 'question-text', 'data-testid': 'question-text' }, q.text),
+      el('div', { className: 'options-grid', 'data-testid': 'options-grid', role: 'group', 'aria-label': 'Answer choices' },
         ...q.options.map((opt, i) => {
           let cls = 'option-btn';
           if (selectedAnswer === i) cls += ' selected';
@@ -313,28 +366,18 @@
             cls += ' disabled';
           }
           if (answerSubmitted && !isReveal) cls += ' disabled';
-          return el('button', { className: cls, 'data-testid': `option-${i}`, onclick: () => handleAnswer(i), disabled: answerSubmitted || isReveal },
-            el('span', { className: 'option-label' }, optLabels[i] || String(i)), opt);
-        })
-      ),
+          return el('button', { className: cls, 'data-testid': `option-${i}`, onclick: () => handleAnswer(i), disabled: answerSubmitted || isReveal, 'aria-pressed': selectedAnswer === i ? 'true' : 'false' },
+            el('span', { className: 'option-label', 'aria-hidden': 'true' }, optLabels[i] || String(i)),
+            el('span', null, opt));
+        })),
     );
 
-    if (answerSubmitted && !isReveal) {
-      card.appendChild(el('div', { className: 'answer-locked', 'data-testid': 'answer-locked' }, 'Answer locked! Waiting for timer...'));
-    }
-    if (isReveal && myResult) {
-      card.appendChild(el('div', { className: 'result-toast ' + (myResult.correct ? 'correct' : 'wrong'), 'data-testid': 'result-toast' },
-        el('span', null, myResult.correct ? 'Correct!' : (selectedAnswer == null ? 'No answer!' : 'Wrong!')),
-        el('span', { className: 'result-score' }, myResult.correct ? `+${myResult.score_earned || 0}` : '+0'),
-      ));
-    } else if (isReveal && !myResult && selectedAnswer == null) {
-      card.appendChild(el('div', { className: 'result-toast wrong', 'data-testid': 'result-toast' },
-        el('span', null, 'Time\'s up! No answer submitted')));
-    }
-    if (isReveal) {
-      card.appendChild(el('div', { className: 'waiting-next', 'data-testid': 'waiting-next' },
-        el('div', { className: 'spinner' }), el('p', null, 'Waiting for host to advance...')));
-    }
+    if (answerSubmitted && !isReveal) card.appendChild(el('div', { className: 'answer-locked', 'data-testid': 'answer-locked', role: 'status' }, el('span', { className: 'lock-icon', 'aria-hidden': 'true' }, '✓'), 'Answer locked. Stay sharp for the reveal.'));
+    if (isReveal && myResult) card.appendChild(el('div', { className: `result-toast ${myResult.correct ? 'correct' : 'wrong'}`, 'data-testid': 'result-toast', role: 'status' },
+      el('span', null, myResult.correct ? 'Correct answer' : (selectedAnswer == null ? 'No answer this round' : 'Not this time')),
+      el('strong', { className: 'result-score' }, myResult.correct ? `+${myResult.score_earned || 0}` : '+0')));
+    else if (isReveal && !myResult && selectedAnswer == null) card.appendChild(el('div', { className: 'result-toast wrong', 'data-testid': 'result-toast', role: 'status' }, 'Time’s up — no answer submitted'));
+    if (isReveal) card.appendChild(el('div', { className: 'waiting-next', 'data-testid': 'waiting-next' }, el('div', { className: 'spinner small' }), el('p', null, 'The host will send the next question soon…')));
     app.appendChild(card);
   }
 
@@ -344,27 +387,27 @@
     answerSubmitted = true;
     render();
     try {
-      await api('/api/answer', {
-        method: 'POST',
-        body: JSON.stringify({ player_id: playerId, question_id: currentQuestion.id, answer: index }),
-      });
+      await api('/api/answer', { method: 'POST', body: JSON.stringify({ player_id: playerId, question_id: currentQuestion.id, answer: index }) });
     } catch (err) {
-      if (err.message && err.message.includes('player not found')) { resetAll(); render(); return; }
+      if (err.message && err.message.includes('player not found')) { resetAll(); render(); notify('Your session expired. Join the room again.', 'error'); }
+      else notify('Answer sent locally; waiting for the reveal.', 'neutral');
     }
   }
 
   function renderFinished(app) {
-    app.appendChild(el('div', { className: 'card finished-screen', 'data-testid': 'finished-screen' },
-      el('h2', null, 'Game Over!'),
+    app.appendChild(el('section', { className: 'card finished-screen', 'data-testid': 'finished-screen' },
+      el('div', { className: 'finish-burst', 'aria-hidden': 'true' }, '★'),
+      el('div', { className: 'eyebrow' }, 'FINAL RESULTS'),
+      el('h2', null, 'Game over'),
       myRank
         ? el('div', { className: 'rank-display', 'data-testid': 'rank-display' },
-            el('p', { className: 'rank-label' }, 'Your Rank'),
-            el('div', { className: 'rank-number' + (myRank <= 3 ? ' top' : '') }, `#${myRank}`),
-            myResult ? el('p', { className: 'total-score' }, `Total: ${myResult.total_score || 0} pts`) : null)
-        : el('div', { className: 'waiting' }, el('div', { className: 'spinner' }), el('p', null, 'Loading your rank...')),
-    ));
+            el('p', { className: 'rank-label' }, 'Your final rank'),
+            el('div', { className: `rank-number${myRank <= 3 ? ' top' : ''}` }, `#${myRank}`),
+            myResult ? el('p', { className: 'total-score' }, `${myResult.total_score || 0} total points`) : null)
+        : el('div', { className: 'waiting' }, el('div', { className: 'spinner' }), el('p', null, 'Loading your final score…')),
+      el('p', { className: 'finish-note' }, 'Nice run. Ready for another round?'),
+      el('button', { className: 'btn btn-secondary', 'data-testid': 'play-again-btn', onclick: () => { resetAll(); render(); } }, 'Join another room')));
   }
 
-  // ---- Init ----
   document.addEventListener('DOMContentLoaded', render);
 })();

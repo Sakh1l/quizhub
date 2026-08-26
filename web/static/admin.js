@@ -26,9 +26,24 @@
   let timerInterval = null;
   let roomCode = '';
   let roomLink = '';
+  let adminInFlight = false;
+  let toastTimer = null;
 
   const API = '';
   const $ = (sel) => document.querySelector(sel);
+
+  function notify(message, tone = 'neutral') {
+    let toast = $('[data-testid="admin-toast"]');
+    if (!toast) {
+      toast = el('div', { className: 'toast', 'data-testid': 'admin-toast', role: 'status', 'aria-live': 'polite' });
+      document.body.appendChild(toast);
+    }
+    toast.className = `toast ${tone}`;
+    toast.textContent = message;
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 3600);
+  }
 
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -51,23 +66,30 @@
   }
 
   async function api(path, opts = {}) {
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
     if (adminToken) headers['X-Admin-Token'] = adminToken;
     const res = await fetch(API + path, { headers, ...opts });
-    const data = await res.json();
+    const raw = await res.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = { error: raw || 'Request failed' }; }
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
 
   // ---- WebSocket ----
   function connectWS() {
-    if (socket && socket.readyState <= 1) return;
+    if (!adminToken || (socket && socket.readyState <= 1)) return;
+    clearTimeout(reconnectTimer);
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    socket = new WebSocket(`${proto}//${location.host}/api/ws?role=admin&admin_token=${encodeURIComponent(adminToken || '')}`);
+    socket = new WebSocket(`${proto}//${location.host}/api/ws?role=admin&admin_token=${encodeURIComponent(adminToken)}`);
     socket.onopen = () => { clearTimeout(reconnectTimer); updateWSStatus(true); };
     socket.onmessage = (evt) => { try { handleWS(JSON.parse(evt.data)); } catch (_) {} };
-    socket.onclose = () => { updateWSStatus(false); reconnectTimer = setTimeout(connectWS, 3000); };
-    socket.onerror = () => socket.close();
+    socket.onclose = () => {
+      socket = null;
+      updateWSStatus(false);
+      if (adminToken && !reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWS(); }, 3000);
+    };
+    socket.onerror = () => { try { socket.close(); } catch (_) {} };
   }
 
   function updateWSStatus(connected) {
@@ -202,13 +224,25 @@
   }
 
   async function handlePIN() {
+    if (adminInFlight) return;
     const errorEl = $('[data-testid="pin-error"]');
+    const btn = $('[data-testid="pin-submit-btn"]');
+    const pin = $('#pin-input')?.value.trim();
+    if (!pin) { errorEl.textContent = 'Enter the admin PIN to continue.'; return; }
+    adminInFlight = true;
+    btn.disabled = true;
+    btn.textContent = 'Unlocking…';
+    errorEl.textContent = '';
     try {
-      const data = await api('/api/admin/auth', { method: 'POST', body: JSON.stringify({ pin: $('#pin-input').value.trim() }) });
+      const data = await api('/api/admin/auth', { method: 'POST', body: JSON.stringify({ pin }) });
       adminToken = data.token;
       connectWS();
       await loadLibrary();
-    } catch (err) { errorEl.textContent = err.message || 'Invalid PIN'; }
+    } catch (err) {
+      errorEl.textContent = err.message || 'Invalid PIN';
+      btn.disabled = false;
+      btn.textContent = 'Unlock';
+    } finally { adminInFlight = false; }
   }
 
   // ---- Library: saved, reusable quizzes ----
@@ -286,7 +320,7 @@
     try {
       await api('/api/admin/quizzes/duplicate', { method: 'POST', body: JSON.stringify({ id }) });
       await loadLibrary();
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message || 'Could not duplicate quiz.', 'error'); }
   }
 
   async function handleDeleteQuiz(id, title) {
@@ -294,7 +328,7 @@
     try {
       await api('/api/admin/quizzes/delete', { method: 'POST', body: JSON.stringify({ id }) });
       await loadLibrary();
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message || 'Could not delete quiz.', 'error'); }
   }
 
   // ---- Editor: add/remove questions for one quiz ----
@@ -374,7 +408,7 @@
       await api('/api/admin/quizzes/rename', { method: 'POST', body: JSON.stringify({ id: currentQuiz.id, title }) });
       currentQuiz.title = title;
       render();
-    } catch (err) { alert(err.message); }
+    } catch (err) { notify(err.message || 'Could not rename quiz.', 'error'); }
   }
 
   async function handleAddQuestion() {
@@ -408,8 +442,12 @@
   }
 
   async function handleCreateRoom() {
+    if (adminInFlight) return;
     const errorEl = $('[data-testid="host-error"]');
+    const btn = $('[data-testid="create-room-btn"]');
     if (errorEl) errorEl.textContent = '';
+    adminInFlight = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing room…'; }
 
     // Set timer first
     const timerVal = parseInt($('#timer-input')?.value);
@@ -425,8 +463,9 @@
       render();
     } catch (err) {
       if (errorEl) errorEl.textContent = err.message;
-      else alert(err.message);
-    }
+      else notify(err.message || 'Could not create the room.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Host This Quiz'; }
+    } finally { adminInFlight = false; }
   }
 
   // ---- Room Lobby: Share code, see players, start game ----
@@ -470,7 +509,13 @@
   }
 
   async function handleStart() {
-    try { await api('/api/game/start', { method: 'POST' }); } catch (e) { alert(e.message); }
+    if (adminInFlight) return;
+    adminInFlight = true;
+    const btn = $('[data-testid="admin-start-btn"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    try { await api('/api/game/start', { method: 'POST' }); }
+    catch (e) { notify(e.message || 'Could not start the game.', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Start Game'; } }
+    finally { adminInFlight = false; }
   }
 
   // ---- Countdown ----
@@ -568,7 +613,8 @@
   async function handleNext() {
     const btn = $('[data-testid="admin-next-btn"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
-    try { await api('/api/game/next', { method: 'POST' }); } catch (e) { alert(e.message); }
+    try { await api('/api/game/next', { method: 'POST' }); }
+    catch (e) { notify(e.message || 'Could not advance the game.', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Next Question'; } }
   }
 
   // ---- Finished ----
@@ -594,13 +640,13 @@
   }
 
   async function handleBackToLibrary() {
-    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
+    try { await resetSession(); } catch (err) { notify(err.message || 'Failed to reset session.', 'error'); }
   }
 
   async function handleResetSession() {
     const ok = window.confirm('Reset this quiz session and clear players, scores, and room data? Your saved quizzes are kept. This cannot be undone.');
     if (!ok) return;
-    try { await resetSession(); } catch (err) { alert(err.message || 'Failed to reset session'); }
+    try { await resetSession(); } catch (err) { notify(err.message || 'Failed to reset session.', 'error'); }
   }
 
   document.addEventListener('DOMContentLoaded', render);
