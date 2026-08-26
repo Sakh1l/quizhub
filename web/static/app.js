@@ -237,7 +237,9 @@
   }
 
   function renderJoin(app) {
-    const urlRoom = new URLSearchParams(location.search).get('room') || '';
+    const pathMatch = location.pathname.match(/^\/join\/([^/]+)\/?$/i);
+    const pathRoom = pathMatch ? decodeURIComponent(pathMatch[1]) : '';
+    const urlRoom = (new URLSearchParams(location.search).get('room') || pathRoom).trim().toUpperCase();
     const card = el('section', { className: 'card join-screen', 'data-testid': 'join-screen' },
       el('div', { className: 'eyebrow' }, 'PLAYER ENTRY'),
       el('h2', null, 'Join the arena'),

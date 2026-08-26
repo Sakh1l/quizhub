@@ -5,11 +5,20 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/sakh1l/quizhub/internal/models"
 	"github.com/sakh1l/quizhub/internal/ws"
 )
+
+func publicJoinURL(code string) string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("QUIZHUB_PUBLIC_URL")), "/")
+	if base == "" {
+		base = "https://quizhub.cc"
+	}
+	return base + "/join/" + code
+}
 
 func generateRoomCode() string {
 	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -148,7 +157,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	h.Hub.Broadcast(ws.EventRoomCreated, map[string]string{"room_code": code})
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"room_code": code,
-		"link":      "/?room=" + code,
+		"link":      publicJoinURL(code),
 	})
 }
 

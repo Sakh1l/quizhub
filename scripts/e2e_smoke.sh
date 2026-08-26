@@ -17,6 +17,13 @@ curl -fsS -X POST "$BASE_URL/api/admin/quizzes/questions" -H 'Content-Type: appl
 curl -fsS -X POST "$BASE_URL/api/admin/timer" -H 'Content-Type: application/json' -H "X-Admin-Token: $token" -d '{"time_limit":5}' >/dev/null
 room_json=$(curl -fsS -X POST "$BASE_URL/api/room/create" -H 'Content-Type: application/json' -H "X-Admin-Token: $token" -d "{\"quiz_id\":$quiz_id}")
 room_code=$(printf '%s' "$room_json" | sed -n 's/.*"room_code":"\([^"]*\)".*/\1/p')
+room_link=$(printf '%s' "$room_json" | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
+[ "$room_link" = "https://quizhub.cc/join/$room_code" ] || { echo "unexpected join link: $room_link" >&2; exit 1; }
+route_status=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/join/$room_code")
+[ "$route_status" = "200" ] || { echo "join route failed: $route_status" >&2; exit 1; }
+curl -fsS "$BASE_URL/api/room/qr?code=$room_code" -o /tmp/quizhub-smoke-qr.png
+qr_magic=$(od -An -tx1 -N4 /tmp/quizhub-smoke-qr.png | tr -d ' \\n')
+[ "$qr_magic" = "89504e47" ] || { echo "QR endpoint did not return PNG" >&2; exit 1; }
 player_json=$(curl -fsS -X POST "$BASE_URL/api/join" -H 'Content-Type: application/json' -d "{\"nickname\":\"Smoke Player\",\"room_code\":\"$room_code\"}")
 player_id=$(printf '%s' "$player_json" | sed -n 's/.*"player_id":"\([^"]*\)".*/\1/p')
 [ -n "$player_id" ] || { echo "player join failed" >&2; exit 1; }

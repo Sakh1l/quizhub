@@ -469,15 +469,33 @@
   }
 
   // ---- Room Lobby: Share code, see players, start game ----
+  async function copyRoomLink() {
+    try {
+      await navigator.clipboard.writeText(roomLink);
+      notify('Join link copied.', 'success');
+    } catch (_) {
+      notify('Copy failed. Select the link manually.', 'error');
+    }
+  }
+
   function renderRoomLobby(app) {
     const card = el('div', { className: 'card', style: 'text-align:center', 'data-testid': 'room-lobby' },
-      el('h2', null, 'Room Ready!'),
-
-      el('div', { className: 'room-code-display', 'data-testid': 'room-code-display' },
-        el('p', { style: 'color:var(--text-secondary);font-size:0.85rem;margin-bottom:0.5rem' }, 'Share this code with players:'),
-        el('div', { className: 'room-code-big', 'data-testid': 'room-code-big' }, roomCode),
-        el('p', { style: 'color:var(--text-muted);font-size:0.8rem;margin-top:0.5rem;word-break:break-all' }, roomLink),
-        el('button', { className: 'btn btn-secondary btn-sm', style: 'margin-top:0.75rem', onclick: () => { navigator.clipboard?.writeText(roomLink); } }, 'Copy Link'),
+            el('div', { className: 'room-ready-heading' },
+        el('div', { className: 'eyebrow' }, 'LIVE ROOM'),
+        el('h2', null, 'Room ready to share'),
+        el('p', { className: 'subtitle' }, 'Project this screen. Players can scan the code or open the join link.')),
+      el('div', { className: 'room-share-grid', 'data-testid': 'room-share-grid' },
+        el('div', { className: 'qr-panel', 'data-testid': 'room-qr-panel' },
+          el('div', { className: 'qr-frame' },
+            el('img', { src: `/api/room/qr?code=${encodeURIComponent(roomCode)}`, alt: `QR code to join room ${roomCode}`, width: '360', height: '360', loading: 'eager' }),
+          ),
+          el('p', { className: 'qr-caption' }, 'Scan to join this room')),
+        el('div', { className: 'room-code-display', 'data-testid': 'room-code-display' },
+          el('p', { className: 'share-label' }, 'Or enter this room code'),
+          el('div', { className: 'room-code-big', 'data-testid': 'room-code-big' }, roomCode),
+          el('p', { className: 'join-url', 'data-testid': 'join-url' }, roomLink),
+          el('button', { className: 'btn btn-secondary btn-sm', style: 'margin-top:0.75rem', onclick: copyRoomLink }, 'Copy join link'),
+        ),
       ),
 
       el('div', { style: 'margin-top:2rem;text-align:left' },

@@ -68,7 +68,8 @@ func TestHealthAndAdminAuth(t *testing.T) {
 	}
 }
 
-func TestCreateRoomAndJoin(t *testing.T) {
+func TestCreateAndJoin(t *testing.T) {
+	t.Setenv("QUIZHUB_PUBLIC_URL", "https://quizhub.cc")
 	mux := newMux(t)
 	tok := adminToken(t, mux)
 
@@ -84,6 +85,14 @@ func TestCreateRoomAndJoin(t *testing.T) {
 	code := room["room_code"]
 	if code == "" {
 		t.Fatal("expected room_code")
+	}
+	if want := "https://quizhub.cc/join/" + code; room["link"] != want {
+		t.Fatalf("expected branded join link %q, got %q", want, room["link"])
+	}
+
+	qr := reqJSON(mux, http.MethodGet, "/api/room/qr?code="+code, nil, "")
+	if qr.Code != http.StatusOK || qr.Header().Get("Content-Type") != "image/png" || !bytes.HasPrefix(qr.Body.Bytes(), []byte("\x89PNG")) {
+		t.Fatalf("expected PNG QR response, status=%d content-type=%q", qr.Code, qr.Header().Get("Content-Type"))
 	}
 
 	w = reqJSON(mux, http.MethodPost, "/api/join", map[string]string{"nickname": "Alice", "room_code": code}, "")

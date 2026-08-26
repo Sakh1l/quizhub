@@ -107,6 +107,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/answer", methodOnly(http.MethodPost, h.Answer))
 	mux.HandleFunc("/api/leaderboard", methodOnly(http.MethodGet, h.Leaderboard))
 	mux.HandleFunc("/api/room/info", methodOnly(http.MethodGet, h.RoomInfo))
+	mux.HandleFunc("/api/room/qr", methodOnly(http.MethodGet, h.JoinQRCode))
 
 	mux.HandleFunc("/api/game/start", methodOnly(http.MethodPost, h.adminOnly(h.StartGame)))
 	mux.HandleFunc("/api/game/next", methodOnly(http.MethodPost, h.adminOnly(h.NextQuestion)))

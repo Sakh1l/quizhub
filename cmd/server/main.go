@@ -43,6 +43,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load static files: %v", err)
 	}
+	indexHTML, err := fs.ReadFile(staticFS, "index.html")
+	if err != nil {
+		log.Fatalf("Failed to load participant shell: %v", err)
+	}
+	mux.HandleFunc("/join/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(indexHTML)
+	})
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	handler := middleware.Chain(
