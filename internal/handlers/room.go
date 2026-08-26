@@ -90,9 +90,15 @@ func (h *Handler) Join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Hub.Broadcast(ws.EventPlayerJoined, player)
-	h.broadcastPlayers()
 	writeJSON(w, http.StatusCreated, player)
+
+	// The player can fetch the current roster after entering the lobby. Keep
+	// the HTTP join response independent from the full-roster read and fan-out
+	// so concurrent joins do not queue behind nonessential broadcast work.
+	go func() {
+		h.Hub.Broadcast(ws.EventPlayerJoined, player)
+		h.broadcastPlayers()
+	}()
 }
 
 func (h *Handler) Players(w http.ResponseWriter, r *http.Request) {

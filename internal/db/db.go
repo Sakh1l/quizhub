@@ -25,6 +25,12 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
+	// SQLite permits one writer at a time. A single pooled connection keeps
+	// concurrent HTTP handlers from racing separate connections into immediate
+	// "database is locked" failures on the small single-machine deployment.
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
+
 	// SQLite performance pragmas
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
@@ -190,20 +196,33 @@ func (d *DB) CreatePlayer(nickname string) (models.Player, error) {
 	id := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	_, err := d.conn.Exec(
-		"INSERT INTO players (id, nickname, score, created_at) VALUES (?, ?, 0, ?)",
-		id, nickname, now,
-	)
-	if err != nil {
-		return models.Player{}, fmt.Errorf("insert player: %w", err)
+	const maxAttempts = 4
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		_, err := d.conn.Exec(
+			"INSERT INTO players (id, nickname, score, created_at) VALUES (?, ?, 0, ?)",
+			id, nickname, now,
+		)
+		if err == nil {
+			return models.Player{
+				ID:        id,
+				Nickname:  nickname,
+				Score:     0,
+				CreatedAt: time.Now().UTC(),
+			}, nil
+		}
+		if !isSQLiteBusy(err) || attempt == maxAttempts-1 {
+			return models.Player{}, fmt.Errorf("insert player: %w", err)
+		}
+		time.Sleep(time.Duration(10*(1<<attempt)) * time.Millisecond)
 	}
+	return models.Player{}, fmt.Errorf("insert player: retry loop exhausted")
+}
 
-	return models.Player{
-		ID:        id,
-		Nickname:  nickname,
-		Score:     0,
-		CreatedAt: time.Now().UTC(),
-	}, nil
+func isSQLiteBusy(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "database is busy")
 }
 
 // GetPlayer returns a player by ID.
